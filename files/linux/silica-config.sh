@@ -50,7 +50,7 @@ enable BUG_ON_DATA_CORRUPTION
 enable LIST_HARDENED
 
 # Legacy interfaces that only widen the attack surface.
-remove DEVMEM
+# /dev/mem stays (STRICT_DEVMEM); lockdown denies it to everyone.
 remove DEVPORT
 remove LEGACY_TIOCSTI
 remove LEGACY_VSYSCALL_XONLY

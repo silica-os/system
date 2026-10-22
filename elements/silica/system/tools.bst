@@ -5,7 +5,7 @@ description: |
 
 build-depends:
 - freedesktop-sdk.bst:public-stacks/runtime-gnu.bst
-- freedesktop-sdk.bst:components/rust.bst
+- freedesktop-sdk.bst:public-stacks/buildsystem-rust.bst
 
 depends:
 - freedesktop-sdk.bst:components/systemd.bst
