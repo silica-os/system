@@ -270,6 +270,7 @@ fn sync(mgr: &BootManager, roots: &Roots, parsed: &Parsed, out: &mut dyn Write) 
     let opts = SyncOptions {
         booted: parsed.value("booted").map(str::to_string),
         booted_fallback: os_release_version(roots),
+        tried: Some(roots.path("/var/lib/silica/boot/tried")),
     };
     let ukis = scan_ukis(&dir)?;
     let report = mgr.sync(&info, &dir, &opts)?;
@@ -341,6 +342,13 @@ mod tests {
         let out = run_ok(&roots, &["sync"]);
         assert!(out.contains("BootNext set to Boot0002"), "{out}");
         assert!(run_ok(&roots, &["status"]).contains("BootNext:    0002 (Silica 1.1.0)"));
+
+        // 1.1.0 fails: the firmware consumed BootNext and fell back to 1.0.0,
+        // so the next sync must not hand 1.1.0 to BootNext again
+        EfiVars::new(&roots.efivars).clear_boot_next().unwrap();
+        let out = run_ok(&roots, &["sync"]);
+        assert!(out.contains("did not start last time"), "{out}");
+        assert!(run_ok(&roots, &["status"]).contains("BootNext:    not set"));
 
         // firmware boots 1.1.0 and consumes BootNext
         EfiVars::new(&roots.efivars).clear_boot_next().unwrap();

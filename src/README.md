@@ -29,3 +29,7 @@ ESP (builders in `efi/src/fixture.rs`). To run a tool against a fake tree by han
   (1 for failures, 2 for usage errors).
 - The only `unsafe` is the `FS_IOC_SETFLAGS` ioctl that clears the immutable flag efivarfs puts on
   variable files (`efi/src/efivars.rs`).
+
+Run the gate with the target directory outside the tree (the image build
+copies `src/` as is):
+`CARGO_TARGET_DIR=/dev/shm/silica-target cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`

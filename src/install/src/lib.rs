@@ -393,6 +393,7 @@ pub fn run(
         &SyncOptions {
             booted: Some(newest.clone()),
             booted_fallback: None,
+            tried: None,
         },
     )?;
     for m in &report.messages {

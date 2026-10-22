@@ -8,7 +8,7 @@ use crate::loadopt::{utf16_bytes, LoadOption};
 use crate::version;
 use std::cmp::Ordering;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 pub const RECOVERY_LABEL: &str = "Silica Recovery";
 pub const LABEL_PREFIX: &str = "Silica ";
@@ -77,6 +77,35 @@ pub struct SyncOptions {
     pub booted: Option<String>,
     /// Used when `BootCurrent` does not identify the running version.
     pub booted_fallback: Option<String>,
+    /// Versions already handed to `BootNext`, one per line. A version listed
+    /// here that is not the running one failed to start: it is not tried
+    /// again until a newer version arrives.
+    pub tried: Option<PathBuf>,
+}
+
+fn read_tried(path: &Path) -> Vec<String> {
+    fs::read_to_string(path)
+        .map(|t| {
+            t.lines()
+                .map(|l| l.trim().to_string())
+                .filter(|l| !l.is_empty())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn record_tried(path: &Path, version: &str) -> Result<()> {
+    let mut tried = read_tried(path);
+    if tried.iter().any(|v| v == version) {
+        return Ok(());
+    }
+    tried.push(version.to_string());
+    if let Some(dir) = path.parent() {
+        fs::create_dir_all(dir)
+            .map_err(|e| Error::new(format!("cannot create {}: {e}", dir.display())))?;
+    }
+    fs::write(path, tried.join("\n") + "\n")
+        .map_err(|e| Error::new(format!("cannot write {}: {e}", path.display())))
 }
 
 #[derive(Debug, Default, Clone)]
@@ -392,8 +421,19 @@ impl BootManager {
 
         // A newer version than the running one boots next, once.
         if let (Some(b), Some(newest)) = (&booted, &newest) {
-            if version::compare(newest, b) == Ordering::Greater {
+            let failed = opts
+                .tried
+                .as_deref()
+                .is_some_and(|t| read_tried(t).iter().any(|v| v == newest));
+            if failed && version::compare(newest, b) == Ordering::Greater {
+                report.messages.push(format!(
+                    "Silica {newest} did not start last time; staying on {b}"
+                ));
+            } else if version::compare(newest, b) == Ordering::Greater {
                 if let Some((_, n)) = numbers.iter().find(|(v, _)| v == newest) {
+                    if let Some(t) = &opts.tried {
+                        record_tried(t, newest)?;
+                    }
                     self.vars.set_boot_next(*n)?;
                     report.messages.push(format!(
                         "BootNext set to {} (Silica {newest}, running {b})",
@@ -759,6 +799,7 @@ mod tests {
         let o = SyncOptions {
             booted: None,
             booted_fallback: Some("1.0.0".into()),
+            tried: None,
         };
         e.mgr.sync(&e.esp, &e.esp_dir, &o).unwrap();
         let new = e.number_of("Silica 2.0.0");
@@ -766,6 +807,7 @@ mod tests {
         let o = SyncOptions {
             booted: Some("2.0.0".into()),
             booted_fallback: None,
+            tried: None,
         };
         e.mgr.vars().clear_boot_next().unwrap();
         e.mgr.sync(&e.esp, &e.esp_dir, &o).unwrap();
