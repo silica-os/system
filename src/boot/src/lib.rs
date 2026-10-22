@@ -12,7 +12,6 @@ use silica_efi::guid::format_guid;
 use silica_efi::loadopt::LoadOption;
 use silica_efi::manager::{kind, scan_ukis, Bless, BootManager, Kind, Position, SyncOptions};
 use silica_efi::roots::Roots;
-use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
 
@@ -74,7 +73,7 @@ pub fn run(args: &[String], roots: Roots, out: &mut dyn Write) -> std::result::R
         "status" => status(&mgr, out)?,
         "add" => add(&mgr, &roots, &parsed, out)?,
         "next" => next(&mgr, &parsed, out)?,
-        "bless" => bless(&mgr, &roots, out)?,
+        "bless" => bless(&mgr, &roots, &parsed, out)?,
         "sync" => sync(&mgr, &roots, &parsed, out)?,
         other => return Err(Failure::Usage(format!("unknown command '{other}'"))),
     }
@@ -250,31 +249,23 @@ fn next(
     Ok(())
 }
 
-fn bless(mgr: &BootManager, roots: &Roots, out: &mut dyn Write) -> Result<()> {
+use silica_efi::system::{os_release_version, refresh_fallback, FALLBACK_PATH};
+
+fn bless(mgr: &BootManager, roots: &Roots, parsed: &Parsed, out: &mut dyn Write) -> Result<()> {
     let running = os_release_version(roots);
-    let msg = match mgr.bless(running.as_deref())? {
-        Bless::Blessed(n) => format!("{} is now first in BootOrder\n", hex4(n)),
-        Bless::AlreadyFirst(n) => format!("{} is already first in BootOrder\n", hex4(n)),
+    let blessed = mgr.bless(running.as_deref())?;
+    let mut msg = match &blessed {
+        Bless::Blessed(n) => format!("{} is now first in BootOrder\n", hex4(*n)),
+        Bless::AlreadyFirst(n) => format!("{} is already first in BootOrder\n", hex4(*n)),
         Bless::NotApplicable(why) => format!("nothing to bless: {why}\n"),
     };
-    write_out(out, &msg)
-}
-
-fn os_release_version(roots: &Roots) -> Option<String> {
-    for file in ["/etc/os-release", "/usr/lib/os-release"] {
-        let Ok(text) = fs::read_to_string(roots.path(file)) else {
-            continue;
-        };
-        for line in text.lines() {
-            if let Some(v) = line.strip_prefix("IMAGE_VERSION=") {
-                let v = v.trim().trim_matches('"').trim_matches('\'');
-                if !v.is_empty() {
-                    return Some(v.to_string());
-                }
-            }
+    if let (Bless::Blessed(_) | Bless::AlreadyFirst(_), Some(v)) = (&blessed, &running) {
+        let (_, esp_dir) = resolve_esp(roots, parsed)?;
+        if refresh_fallback(&esp_dir, v)? {
+            msg.push_str(&format!("{FALLBACK_PATH} now holds Silica {v}\n"));
         }
     }
-    None
+    write_out(out, &msg)
 }
 
 fn sync(mgr: &BootManager, roots: &Roots, parsed: &Parsed, out: &mut dyn Write) -> Result<()> {
@@ -298,6 +289,7 @@ fn sync(mgr: &BootManager, roots: &Roots, parsed: &Parsed, out: &mut dyn Write) 
 mod tests {
     use super::*;
     use silica_efi::fixture::{fake_system, tmpdir};
+    use std::fs;
 
     fn run_ok(roots: &Roots, args: &[&str]) -> String {
         let args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
@@ -443,5 +435,23 @@ mod tests {
         .unwrap();
         assert_eq!(os_release_version(&roots).as_deref(), Some("1.0.0"));
         let _ = fs::remove_dir_all(&roots.root);
+    }
+
+    #[test]
+    fn fallback_loader_follows_the_blessed_version() {
+        let esp = tmpdir("boot-fallback");
+        fs::create_dir_all(esp.join("EFI/Linux")).unwrap();
+        fs::create_dir_all(esp.join("EFI/BOOT")).unwrap();
+        fs::write(esp.join("EFI/Linux/silica_1.1.0.efi"), b"new uki").unwrap();
+        fs::write(esp.join("EFI/BOOT/BOOTX64.EFI"), b"factory uki").unwrap();
+        assert!(refresh_fallback(&esp, "1.1.0").unwrap());
+        assert_eq!(
+            fs::read(esp.join("EFI/BOOT/BOOTX64.EFI")).unwrap(),
+            b"new uki"
+        );
+        assert!(!esp.join("EFI/BOOT/BOOTX64.EFI.new").exists());
+        assert!(!refresh_fallback(&esp, "1.1.0").unwrap());
+        assert!(refresh_fallback(&esp, "9.9.9").is_err());
+        let _ = fs::remove_dir_all(&esp);
     }
 }

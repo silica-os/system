@@ -13,6 +13,7 @@ pub mod guid;
 pub mod loadopt;
 pub mod manager;
 pub mod roots;
+pub mod system;
 pub mod version;
 
 pub use error::{Context, Error, Failure, Result};

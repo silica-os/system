@@ -12,6 +12,7 @@ use silica_efi::gpt;
 use silica_efi::guid::{parse_guid, ESP_TYPE};
 use silica_efi::manager::{kind, scan_ukis, BootManager, Kind, SyncOptions};
 use silica_efi::roots::Roots;
+use silica_efi::system::{os_release_version, refresh_fallback};
 use std::collections::BTreeSet;
 use std::fs::{self, File};
 use std::io::{BufRead, Write};
@@ -39,6 +40,7 @@ pub struct Tools {
     pub mount: String,
     pub umount: String,
     pub udevadm: String,
+    pub sfdisk: String,
     /// How long to wait for the new partitions to appear.
     pub wait: Duration,
 }
@@ -50,6 +52,7 @@ impl Default for Tools {
             mount: "mount".into(),
             umount: "umount".into(),
             udevadm: "udevadm".into(),
+            sfdisk: "sfdisk".into(),
             wait: Duration::from_secs(20),
         }
     }
@@ -273,6 +276,69 @@ fn wait_for_esp(roots: &Roots, disk: &Disk, wait: Duration) -> Result<String> {
     }
 }
 
+const USR_TYPE: &str = "8484680c-9521-48c6-9c11-b0720656f69e";
+const USR_VERITY_TYPE: &str = "77ff5f63-e7b6-4633-acf4-1565b864c0e6";
+
+/// The partition UUIDs the initrd looks for: the first and the last 128 bits
+/// of the dm-verity root hash, for the data and the hash partition.
+fn verity_uuids(usrhash: &str) -> Option<(String, String)> {
+    if usrhash.len() != 64 || !usrhash.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
+    let uuid = |h: &str| {
+        format!(
+            "{}-{}-{}-{}-{}",
+            &h[0..8],
+            &h[8..12],
+            &h[12..16],
+            &h[16..20],
+            &h[20..32]
+        )
+    };
+    Some((uuid(&usrhash[..32]), uuid(&usrhash[32..])))
+}
+
+/// systemd-repart copies the system partitions block by block but gives
+/// them new partition UUIDs. The UKI finds /usr by UUIDs derived from its
+/// root hash (`usrhash=`), so set them to what the running system booted.
+fn pin_verity_uuids(roots: &Roots, disk: &Disk, tools: &Tools, out: &mut dyn Write) -> Result<()> {
+    let cmdline = fs::read_to_string(roots.path("/proc/cmdline")).unwrap_or_default();
+    let Some(hash) = cmdline
+        .split_whitespace()
+        .find_map(|a| a.strip_prefix("usrhash="))
+    else {
+        say(
+            out,
+            "  not booted from a sealed image (no usrhash=): partition UUIDs left as they are",
+        )?;
+        return Ok(());
+    };
+    let (data_uuid, hash_uuid) = verity_uuids(hash)
+        .ok_or_else(|| Error::new(format!("usrhash={hash} is not a SHA-256 root hash")))?;
+    let usr = parse_guid(USR_TYPE).ok_or_else(|| Error::new("internal error: bad usr GUID"))?;
+    let verity =
+        parse_guid(USR_VERITY_TYPE).ok_or_else(|| Error::new("internal error: bad verity GUID"))?;
+    let lbs = esp::logical_block_size(roots, &disk.name);
+    let mut f = File::open(&disk.path)
+        .map_err(|e| Error::new(format!("cannot read {}: {e}", disk.path.display())))?;
+    let table = gpt::parse(&mut f, lbs)?;
+    let path = disk.path.to_string_lossy().into_owned();
+    for (type_guid, uuid, what) in [(usr, &data_uuid, "system"), (verity, &hash_uuid, "verity")] {
+        let entry = table
+            .entries
+            .iter()
+            .find(|e| e.type_guid == type_guid)
+            .ok_or_else(|| Error::new(format!("the new disk has no {what} partition")))?;
+        cmd::run(
+            &tools.sfdisk,
+            &["--part-uuid", &path, &entry.number.to_string(), uuid],
+        )
+        .map_err(|e| Error::new(format!("cannot set the {what} partition's UUID: {e}")))?;
+    }
+    let _ = cmd::run(&tools.udevadm, &["settle", "--timeout=10"]);
+    Ok(())
+}
+
 /// A mounted ESP that is unmounted and removed on drop.
 struct Mounted<'a> {
     dir: PathBuf,
@@ -360,6 +426,7 @@ pub fn run(
     // Let udev create the device nodes; a missing udevadm is not fatal.
     let _ = cmd::run(&tools.udevadm, &["settle", "--timeout=10"]);
     let part = wait_for_esp(roots, &disk, tools.wait)?;
+    pin_verity_uuids(roots, &disk, tools, out)?;
     say(out, &format!("Writing the boot entries (ESP is {part})"))?;
 
     let mount_dir = roots
@@ -381,12 +448,29 @@ pub fn run(
 
     let info = esp::from_device_name(roots, &part)?;
     let ukis = scan_ukis(&mount_dir)?;
-    let newest = ukis.last().map(|(v, _)| v.clone()).ok_or_else(|| {
-        Error::new("the new ESP holds no EFI/Linux/silica_*.efi; the repart definitions are wrong")
-    })?;
+    // The system partitions were copied from the running system, so the new
+    // disk boots the running version: drop every other UKI the ESP copy
+    // brought along (a staged update, an old version), and make the
+    // fallback loader that version too.
+    let newest = match os_release_version(roots) {
+        Some(v) if ukis.iter().any(|(u, _)| *u == v) => v,
+        _ => ukis.last().map(|(v, _)| v.clone()).ok_or_else(|| {
+            Error::new(
+                "the new ESP holds no EFI/Linux/silica_*.efi; the repart definitions are wrong",
+            )
+        })?,
+    };
+    for (v, file) in &ukis {
+        if *v != newest {
+            let path = mount_dir.join("EFI/Linux").join(file);
+            fs::remove_file(&path)
+                .map_err(|e| Error::new(format!("cannot remove {}: {e}", path.display())))?;
+        }
+    }
+    refresh_fallback(&mount_dir, &newest)?;
     let mgr = BootManager::new(EfiVars::new(&roots.efivars));
-    // The new system is not "running", so make the newest UKI the reference:
-    // no BootNext, and the recovery entry points at it.
+    // The new system is not "running" yet: no BootNext, and the recovery
+    // entry points at the installed version.
     let report = mgr.sync(
         &info,
         &mount_dir,
@@ -589,6 +673,20 @@ mod tests {
     }
 
     #[test]
+    fn verity_uuids_split_the_root_hash() {
+        let h = "5224a53630bd3b571485b29cb2608ce47d90c44f039cb4860a1f715fba424083";
+        assert_eq!(
+            verity_uuids(h),
+            Some((
+                "5224a536-30bd-3b57-1485-b29cb2608ce4".to_string(),
+                "7d90c44f-039c-b486-0a1f-715fba424083".to_string()
+            ))
+        );
+        assert_eq!(verity_uuids("abc"), None);
+        assert_eq!(verity_uuids(&"g".repeat(64)), None);
+    }
+
+    #[test]
     fn end_to_end_with_fake_tools() {
         let roots = system("inst-e2e");
         let bin = tmpdir("inst-e2e-bin");
@@ -618,6 +716,7 @@ mod tests {
                 &format!("echo umount \"$@\" >> {}; rm -rf \"$1\"/*", log.display()),
             ),
             udevadm: "/nonexistent/udevadm".into(),
+            sfdisk: "/nonexistent/sfdisk".into(),
             wait: Duration::from_secs(2),
         };
         // an existing foreign entry that must be kept
@@ -679,7 +778,8 @@ mod tests {
         assert_eq!(new.2, Some([0x77; 16]));
         assert_eq!(order[0], new.0, "newest version first");
         assert!(order.contains(&w), "foreign entry is kept");
-        assert!(labels.iter().any(|(_, l, _)| l == "Silica 1.0.0"));
+        // only the installed version boots from the new disk
+        assert!(!labels.iter().any(|(_, l, _)| l == "Silica 1.0.0"));
         assert!(labels.iter().any(|(_, l, _)| l == "Silica Recovery"));
         assert_eq!(mgr.vars().boot_next().unwrap(), None);
         let rec = mgr
