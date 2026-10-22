@@ -77,11 +77,13 @@ depends:
 - silica/components/libfprint.bst
 - silica/components/fprintd.bst
 - silica/components/espeak-ng.bst
+- silica/components/speech-dispatcher.bst
 - silica/components/brltty.bst
 - silica/components/smartmontools.bst
 - silica/components/nvme-cli.bst
 - silica/components/sane-backends.bst
 - silica/components/sane-airscan.bst
+- silica/components/ipp-usb.bst
 - silica/components/intel-microcode.bst
 - silica/components/openvpn.bst
 # Silica.

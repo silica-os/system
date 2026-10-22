@@ -319,7 +319,6 @@ Found while testing:
 - **SELinux:** freedesktop-sdk's systemd is built without SELinux (`-SELINUX`). The Silica policy
   needs a systemd element of our own first. The LSM is built into the kernel.
 - **Missing components:**
-  - ipp-usb and speech-dispatcher have no recipe yet.
   - zsh is the shell of homed's first-boot user and of `useradd`; `homectl create` needs
     `--shell=/usr/bin/zsh` (systemd's built-in default is bash).
   - Silica's own recipes are in `elements/silica/components/`.
