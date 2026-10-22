@@ -3,6 +3,7 @@ description: Silica's system configuration, layout and services.
 
 build-depends:
 - freedesktop-sdk.bst:public-stacks/runtime-gnu.bst
+- freedesktop-sdk.bst:components/findutils.bst
 
 variables:
   strip-binaries: ''

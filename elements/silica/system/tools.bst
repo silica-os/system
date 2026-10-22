@@ -13,6 +13,9 @@ depends:
 environment:
   CARGO_HOME: '%{build-root}/.cargo'
 
+variables:
+  strip-binaries: ''
+
 config:
   build-commands:
   - cargo build --offline --locked --release
