@@ -298,6 +298,16 @@ Built and verified in QEMU (OVMF, swtpm, KVM):
     and fixes the copied partitions' verity UUIDs.
   - The installed disk boots on its own and builds its B slot and data partition on first boot.
 - **IPE:** the policy is active and enforcing.
+- **SELinux:** the `silica` policy loads on every boot, the first one included, in permissive mode.
+  - The policy is the reference policy, built monolithic (MCS, systemd) by
+    `elements/silica/components/refpolicy.bst`. It lives in `/usr/lib/selinux/silica`, sealed with
+    `/usr`; `/etc/selinux/silica` points there, and `/etc/selinux/config` picks the mode.
+  - systemd is rebuilt with `-Dselinux=enabled` (`systemd-selinux.bst`) and copied over
+    freedesktop-sdk's build of the same version in `usr.bst`.
+  - `mkfs.erofs --file-contexts` labels `/usr` at build time. `/Users` is labelled like `/home`.
+  - On the first boot, the initrd copies `/etc/selinux` from the factory defaults, so systemd finds
+    the policy before tmpfiles fills `/etc`. `silica-selinux-relabel.service` then labels the data
+    partition, and again whenever the policy's file contexts change.
   - A binary copied to `/tmp` and an executable script in a home both fail with `EACCES`.
   - Everything on the sealed image runs.
   - Scripts still run through their interpreter (`zsh script.sh`).
@@ -316,8 +326,8 @@ Found while testing:
 ## 7. Not done yet
 
 - **kCFI:** it needs a Clang-built kernel; the kernel is built with GCC for now.
-- **SELinux:** freedesktop-sdk's systemd is built without SELinux (`-SELINUX`). The Silica policy
-  needs a systemd element of our own first. The LSM is built into the kernel.
+- **SELinux enforcing:** it needs the denials of a normal boot fixed in the policy, and PAM and
+  dbus-broker built with SELinux (login contexts, D-Bus mediation).
 - **Missing components:**
   - zsh is the shell of homed's first-boot user and of `useradd`; `homectl create` needs
     `--shell=/usr/bin/zsh` (systemd's built-in default is bash).

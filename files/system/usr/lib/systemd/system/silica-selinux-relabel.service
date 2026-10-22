@@ -1,0 +1,19 @@
+[Unit]
+Description=Label the data partition for SELinux
+Documentation=file:/usr/share/doc/silica/base-system.md
+# /usr is labelled at build time; /etc, /var and /Users on the data
+# partition get their labels here on the first boot, and again after an
+# update that changes the policy's file contexts.
+DefaultDependencies=no
+ConditionSecurity=selinux
+After=local-fs.target systemd-tmpfiles-setup.service
+Before=sysinit.target shutdown.target
+Conflicts=shutdown.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/lib/silica/selinux-relabel
+
+[Install]
+WantedBy=sysinit.target

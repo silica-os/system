@@ -1,0 +1,15 @@
+#!/bin/sh
+# Labels the data partition when the policy's file contexts differ from the
+# ones it was last labelled with. -x stays on the data partition: /usr,
+# the ESP and the API filesystems are not touched.
+set -eu
+contexts=/etc/selinux/silica/contexts/files/file_contexts
+stamp=/var/lib/silica/selinux-labelled
+sum="$(sha256sum "${contexts}" | cut -d' ' -f1)"
+if [ "$(cat "${stamp}" 2>/dev/null || true)" = "${sum}" ]; then
+  exit 0
+fi
+restorecon -RFx /
+mkdir -p "${stamp%/*}"
+printf '%s\n' "${sum}" >"${stamp}"
+restorecon -F "${stamp%/*}" "${stamp}"

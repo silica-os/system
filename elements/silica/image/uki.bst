@@ -57,6 +57,7 @@ config:
       --libdirs %{indep-libdir} \
       --add "systemd-repart systemd-veritysetup crypt tpm2-tss" \
       --omit "plymouth" \
+      --include %{indep-libdir}/silica/initrd / \
       initrd.img "${version}"
 
   - |

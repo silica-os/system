@@ -1,0 +1,15 @@
+[Unit]
+Description=Seed the SELinux configuration on the first boot
+# The data partition starts with an empty /etc, and systemd loads the
+# policy right after switching root, before tmpfiles copies the factory
+# defaults: without this the first boot would run with no policy.
+DefaultDependencies=no
+ConditionPathExists=/etc/initrd-release
+ConditionPathExists=!/sysroot/etc/selinux/config
+RequiresMountsFor=/sysroot/etc /sysroot/usr
+After=initrd-fs.target
+Before=initrd.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/cp -a /sysroot/usr/share/factory/etc/selinux /sysroot/etc/selinux

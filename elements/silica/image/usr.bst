@@ -5,7 +5,7 @@ description: |
 
 build-depends:
 - freedesktop-sdk.bst:components/fakecap.bst
-- freedesktop-sdk.bst:components/erofs-utils.bst
+- silica/components/erofs-utils-selinux.bst
 - freedesktop-sdk.bst:components/cryptsetup.bst
 - freedesktop-sdk.bst:components/util-linux.bst
 - freedesktop-sdk.bst:components/openssl.bst
@@ -17,6 +17,9 @@ build-depends:
 - filename: silica/image/keys.bst
   config:
     location: /keys
+- filename: silica/components/systemd-selinux.bst
+  config:
+    location: /systemd-selinux
 
 environment:
   LD_PRELOAD: /usr/libexec/fakecap/fakecap.so
@@ -29,6 +32,11 @@ variables:
 config:
   commands:
   - mkdir -p /fakecap
+
+  - |
+    # systemd with SELinux, over freedesktop-sdk's build of the same version.
+    cp -a /systemd-selinux/. /sysroot/
+    rm -rf /sysroot/usr/lib/debug
 
   - |
     prepare-image.sh --sysroot /sysroot --seed "%{uuidnamespace}" --noboot --noroot >/dev/null
@@ -53,7 +61,10 @@ config:
     rm -f /sysroot/usr/share/factory/etc/machine-id
 
   - |
+    # Labelled from the policy's file contexts, so /usr carries its labels.
     mkfs.erofs -zlz4hc,12 -T "${SOURCE_DATE_EPOCH}" --all-time \
+      --file-contexts=/sysroot/usr/lib/selinux/silica/contexts/files/file_contexts \
+      --mount-point=/usr \
       -U "$(uuidgen -s --namespace '%{uuidnamespace}' --name usr)" \
       /usr.erofs /sysroot/usr
 

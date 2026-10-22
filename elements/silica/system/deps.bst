@@ -86,6 +86,8 @@ depends:
 - silica/components/ipp-usb.bst
 - silica/components/intel-microcode.bst
 - silica/components/openvpn.bst
+- silica/components/selinux-utils.bst
+- silica/components/refpolicy.bst
 # Silica.
 - silica/system/config.bst
 - silica/system/tools.bst

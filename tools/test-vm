@@ -68,6 +68,18 @@ BASE_CHECKS = [
      "cp /usr/bin/true /var/tmp/ipe-test && ! /var/tmp/ipe-test 2>/dev/null"
      " && printf '#!/bin/sh\\n' > /var/tmp/ipe-test.sh && chmod +x /var/tmp/ipe-test.sh"
      " && ! /var/tmp/ipe-test.sh 2>/dev/null; rc=$?; rm -f /var/tmp/ipe-test /var/tmp/ipe-test.sh; exit $rc"),
+    ("SELinux loads Silica's policy, permissive",
+     "sestatus | grep -qE '^SELinux status: +enabled'"
+     " && sestatus | grep -qE '^Loaded policy name: +silica'"
+     " && [ \"$(getenforce)\" = Permissive ]"
+     " && [ \"$(cat /proc/1/attr/current | tr -d '\\0')\" = system_u:system_r:init_t:s0 ]"),
+    ("/usr and the data partition are labelled",
+     "ls -Z /usr/bin/systemctl | grep -q ':bin_t:'"
+     " && ls -Zd /usr/lib/systemd/systemd | grep -q ':init_exec_t:'"
+     " && ls -Zd /etc/shadow | grep -q ':shadow_t:'"
+     " && ls -Zd /var/log | grep -q ':var_log_t:'"
+     " && ls -Zd /Users | grep -q ':home_root_t:'"
+     " && [ -s /var/lib/silica/selinux-labelled ]"),
     ("ipp-usb and speech-dispatcher are installed",
      "p=$(systemctl show -P ExecStart ipp-usb.service | sed -n 's/.*path=\\([^ ;]*\\).*/\\1/p')"
      " && [ -x \"$p\" ] && speech-dispatcher --version >/dev/null"),

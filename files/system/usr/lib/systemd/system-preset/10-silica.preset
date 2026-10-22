@@ -15,6 +15,7 @@ enable upower.service
 enable fwupd-refresh.timer
 enable silica-boot-bless.service
 enable silica-update.timer
+enable silica-selinux-relabel.service
 disable systemd-networkd.service
 disable systemd-networkd.socket
 disable systemd-networkd-wait-online.service
