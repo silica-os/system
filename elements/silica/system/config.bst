@@ -27,6 +27,7 @@ config:
       -e 's|@USR_SIZE@|%{usr-size}|g' \
       -e 's|@VERITY_SIZE@|%{verity-size}|g' \
       -e 's|@SIG_SIZE@|%{sig-size}|g' {} +
+    mkdir -p "%{install-root}/usr/share/silica"
     ln -s ../lib/os-release "%{install-root}/usr/share/silica/os-release"
 
   - |

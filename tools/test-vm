@@ -68,6 +68,9 @@ BASE_CHECKS = [
      "cp /usr/bin/true /var/tmp/ipe-test && ! /var/tmp/ipe-test 2>/dev/null"
      " && printf '#!/bin/sh\\n' > /var/tmp/ipe-test.sh && chmod +x /var/tmp/ipe-test.sh"
      " && ! /var/tmp/ipe-test.sh 2>/dev/null; rc=$?; rm -f /var/tmp/ipe-test /var/tmp/ipe-test.sh; exit $rc"),
+    ("ipp-usb and speech-dispatcher are installed",
+     "p=$(systemctl show -P ExecStart ipp-usb.service | sed -n 's/.*path=\\([^ ;]*\\).*/\\1/p')"
+     " && [ -x \"$p\" ] && speech-dispatcher --version >/dev/null"),
     ("UEFI entries for Silica and Recovery",
      "/usr/libexec/silica/silica-boot status | grep -q 'Silica Recovery'"
      " && /usr/libexec/silica/silica-boot status | grep -q \"Silica $(. /usr/lib/os-release; echo $IMAGE_VERSION)\""),
