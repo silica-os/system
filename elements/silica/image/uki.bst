@@ -74,6 +74,8 @@ config:
       --cmdline=@cmdline-recovery \
       --output=recovery.efi
 
+  # The UKI carries PCR 11 signatures (.pcrsig) by the TPM policy key, so the
+  # data partition unlocks only under Silica's UKIs.
   - |
     cd /work
     version="$(cat kver)"
@@ -83,6 +85,8 @@ config:
       --uname="${version}" \
       --os-release=@%{indep-libdir}/os-release \
       --cmdline=@cmdline-silica \
+      --pcr-private-key=/keys/tpm2-pcr.key \
+      --pcr-public-key=/keys/tpm2-pcr.pub.pem \
       --profile='TITLE=Silica
     ID=silica' \
       --join-profile=recovery.efi \
@@ -90,5 +94,9 @@ config:
       --secureboot-private-key=/keys/secureboot-db.key \
       --secureboot-certificate=/keys/secureboot-db.crt \
       --output=silica.efi
+
+  - |
+    # Show which profiles got a PCR signature.
+    ukify inspect /work/silica.efi | grep -E '^[.a-z]+:|profile' || true
 
   - install -Dm644 /work/silica.efi '%{install-root}/silica_%{silica-version}.efi'
