@@ -6,6 +6,10 @@ description: |
 build-depends:
 - freedesktop-sdk.bst:vm/deploy-tools.bst
 - freedesktop-sdk.bst:components/xz.bst
+- freedesktop-sdk.bst:components/gnupg.bst
+- filename: silica/image/keys.bst
+  config:
+    location: /keys
 - silica/system/config.bst
 - filename: silica/image/usr.bst
   config:
@@ -100,4 +104,10 @@ config:
     xz ${XZFLAGS} -c /usr-image/usr.verity-sig >"${u}/silica_${v}.usr.verity-sig.xz"
     xz ${XZFLAGS} -c "/uki/silica_${v}.efi" >"${u}/silica_${v}.efi.xz"
     (cd "${u}" && sha256sum * >SHA256SUMS)
+    # Signed manifest: sysupdate refuses the payload without it.
+    export GNUPGHOME=/tmp/gnupg
+    rm -rf "${GNUPGHOME}" && mkdir -p /tmp && cp -r /keys/gnupg "${GNUPGHOME}" && chmod 700 "${GNUPGHOME}"
+    gpg --batch --pinentry-mode loopback --passphrase '' --detach-sign \
+      --output "${u}/SHA256SUMS.gpg" "${u}/SHA256SUMS"
+    gpgconf --kill all || true
     ls -la "${u}"

@@ -6,6 +6,7 @@ depends:
 # Core userland, init and login.
 - freedesktop-sdk.bst:public-stacks/runtime-gnu.bst
 - freedesktop-sdk.bst:components/systemd.bst
+- freedesktop-sdk.bst:components/gnupg.bst  # systemd-sysupdate checks SHA256SUMS.gpg with gpg
 - freedesktop-sdk.bst:components/dbus.bst
 - freedesktop-sdk.bst:components/dbus-broker.bst
 - freedesktop-sdk.bst:components/linux-pam.bst

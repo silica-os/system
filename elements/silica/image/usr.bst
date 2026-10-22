@@ -41,6 +41,12 @@ config:
       -out /sysroot/usr/lib/silica/ipe/silica.p7s
 
   - |
+    # The key systemd-sysupdate checks the update manifests with (older
+    # systemd versions read the .gpg name).
+    install -Dm644 /keys/update-pubring.pgp /sysroot/usr/lib/systemd/import-pubring.pgp
+    ln -sf import-pubring.pgp /sysroot/usr/lib/systemd/import-pubring.gpg
+
+  - |
     # Factory defaults for /etc; the data partition starts with an empty /etc.
     mkdir -p /sysroot/usr/share/factory/etc
     cp -a /sysroot/etc/. /sysroot/usr/share/factory/etc/

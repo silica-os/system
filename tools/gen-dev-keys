@@ -16,3 +16,18 @@ gen secureboot-pk "Silica Development Secure Boot PK"
 gen system "Silica Development System Signing"
 # The kernel takes one PEM holding the module signing key and its certificate.
 cat system.key system.crt > system.pem
+# PCR 11 policy key: TPMs take RSA 2048.
+if [ ! -e tpm2-pcr.key ]; then
+  openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out tpm2-pcr.key
+  openssl pkey -in tpm2-pcr.key -pubout -out tpm2-pcr.pub.pem
+fi
+# Update signing key: systemd-sysupdate checks SHA256SUMS.gpg with gpg.
+if [ ! -e update-pubring.pgp ]; then
+  mkdir -p -m 700 gnupg
+  gpg --homedir gnupg --batch --passphrase '' \
+    --quick-gen-key 'Silica Development Updates' rsa4096 sign never 2>/dev/null
+  gpg --homedir gnupg --export > update-pubring.pgp
+  # BuildStream imports keys/ as a plain tree: no agent sockets.
+  gpgconf --homedir gnupg --kill all
+  rm -f gnupg/S.* gnupg/*.lock
+fi
