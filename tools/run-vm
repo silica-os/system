@@ -2,10 +2,13 @@
 # Boots the Silica disk image in QEMU with UEFI (OVMF) and an emulated TPM2.
 #
 #   tools/run-vm [--fresh] [--secure-boot] [--serial FILE] [--headless]
-#                [--uki FILE --append CMDLINE]
+#                [--uki FILE --append CMDLINE] [--credential NAME=VALUE]...
 #
 # --uki boots a UKI through QEMU's direct kernel boot, with CMDLINE as its
 # load options (systemd-stub only honours them with Secure Boot off).
+# --credential passes a systemd credential through SMBIOS (type 11), e.g.
+# firstboot.keymap=it, or home.create.NAME=<base64 user record> via
+# --credential-binary.
 #
 # The VM state (disk overlay, UEFI variables, TPM) lives in out/vm and
 # survives restarts; --fresh starts over from the built image.
@@ -14,7 +17,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="$ROOT/out"
 VM="$OUT/vm"
 IMG=registry.gitlab.com/freedesktop-sdk/infrastructure/freedesktop-sdk-docker-images/bst2:0a258dcf304505c338629e6a477b3d4b6ae3f01f
-fresh=0 secure=0 serial=stdio display="-display gtk" uki="" append=""
+fresh=0 secure=0 serial=stdio display="-display gtk" uki="" append="" creds=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --fresh) fresh=1 ;;
@@ -23,6 +26,8 @@ while [ $# -gt 0 ]; do
     --headless) display="-display none" ;;
     --uki) uki="$2"; shift ;;
     --append) append="$2"; shift ;;
+    --credential) creds="$creds -smbios type=11,value=io.systemd.credential:$2"; shift ;;
+    --credential-binary) creds="$creds -smbios type=11,value=io.systemd.credential.binary:$2"; shift ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
   shift
@@ -62,4 +67,4 @@ qemu-system-x86_64 "$@" -machine q35,smm=on -accel kvm -cpu host -smp 4 -m 4G \
   -device virtio-blk-pci,drive=disk,bootindex=1 \
   -netdev user,id=net0 -device virtio-net-pci,netdev=net0 \
   -device virtio-vga -device qemu-xhci -device usb-tablet \
-  -serial "$serial" $display
+  -serial "$serial" $display $creds

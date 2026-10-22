@@ -1,0 +1,5 @@
+// Members of wheel are administrators: they authenticate with their own
+// password, as on macOS.
+polkit.addAdminRule(function(action, subject) {
+    return ["unix-group:wheel"];
+});
