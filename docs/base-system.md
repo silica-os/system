@@ -262,16 +262,62 @@ and a bundling tool will make that easy for open-source apps.
 7. **Flatpak:** dropped. One Silica app format (drag-and-drop install, per-app widgets), its own
    spec.
 
-## 6. Not done yet
+## 6. Status (2026-10-22)
 
-- kCFI needs a Clang-built kernel; the kernel is built with GCC for now.
-- freedesktop-sdk has no recipe for zsh, thermald, bolt, fprintd (and libfprint),
-  power-profiles-daemon, switcheroo-control, brltty, espeak-ng (and pcaudiolib), smartmontools,
-  nvme-cli, sane-backends, sane-airscan, Intel microcode and OpenVPN: Silica's own elements are in
-  `elements/silica/components/` (tcl is build-only, for brltty's udev rules). Still missing:
-  ipp-usb, speech-dispatcher.
-- zsh is the login shell of users created by homed's first-boot wizard (`--shell`) and by
-  `useradd` (`/etc/default/useradd`); root keeps bash. Users made with `homectl create` need
-  `--shell=/usr/bin/zsh` (systemd's built-in default is bash).
-- SELinux policy and IPE policy (the kernel features are built in).
-- Signed sysupdate manifests (`Verify=false` until the update server signs `SHA256SUMS`).
+Built and verified in QEMU (OVMF, swtpm, KVM):
+
+- **Boot:**
+  - The firmware starts the signed UKI directly, first through `\EFI\BOOT\BOOTX64.EFI` and
+    then through the `Silica <version>` entry that `silica-boot` creates and blesses.
+  - The kernel loads Silica's certificate. `/usr` mounts from erofs on dm-verity, and the root
+    hash signature is checked by the kernel.
+- **First boot:**
+  - systemd-repart adds the B slot and the data partition: btrfs in LUKS2, enrolled in the TPM2.
+  - `/etc` is filled from the factory defaults.
+  - firstboot asks for locale, keymap and timezone (no root password).
+  - homed's wizard creates the first user: zsh, `wheel`, a LUKS2 home under `/Users`.
+- **Login and administration:** console login works, and `run0` authenticates the `wheel` user
+  through polkit.
+- **Network:** NetworkManager reaches full connectivity, with systemd-resolved as DNS.
+- **No failed units** on a normal boot.
+- **Updates:**
+  1. `silica-update.service` downloads 0.1.1 into the B slot and the ESP.
+  2. `BootNext` points at 0.1.1, and the reboot comes up on 0.1.1 with data and homes intact. The
+     TPM unlock survives the update.
+  3. 0.1.1 is blessed to the front of BootOrder.
+- **Recovery:**
+  - The `Silica Recovery` entry (`@1`) shows the menu with the data partition unlocked.
+  - "Roll back to the previous version" boots 0.1.0.
+- **Installer:**
+  - `silica-install --yes --disk /dev/vda` copies the running system to an empty disk in seconds
+    and fixes the copied partitions' verity UUIDs.
+  - The installed disk boots on its own and builds its B slot and data partition on first boot.
+- **IPE:** the policy is active and enforcing.
+  - A binary copied to `/tmp` and an executable script in a home both fail with `EACCES`.
+  - Everything on the sealed image runs.
+  - Scripts still run through their interpreter (`zsh script.sh`).
+
+Found while testing:
+
+- **systemd-repart (v261):**
+  - Verity signature partitions must be exactly 16 KiB.
+  - It asserts (instead of failing cleanly) when an existing partition does not match that size.
+- **OVMF and BootOrder:** OVMF reorders BootOrder when QEMU's disks change, following
+  `bootindex`. Real firmware keeps it.
+
+## 7. Not done yet
+
+- **kCFI:** it needs a Clang-built kernel; the kernel is built with GCC for now.
+- **SELinux:** freedesktop-sdk's systemd is built without SELinux (`-SELINUX`). The Silica policy
+  needs a systemd element of our own first. The LSM is built into the kernel.
+- **Signed update manifests:** sysupdate has `Verify=false` until the update server signs
+  `SHA256SUMS`. The usr image is still checked by the kernel through its verity signature.
+- **Signed TPM policy:** the TPM2 unlock is bound to PCR 7 (Secure Boot state). A signed PCR 11
+  policy (`ukify --pcr-private-key`) would also bind it to Silica's UKIs.
+- **Missing components:**
+  - ipp-usb and speech-dispatcher have no recipe yet.
+  - zsh is the shell of homed's first-boot user and of `useradd`; `homectl create` needs
+    `--shell=/usr/bin/zsh` (systemd's built-in default is bash).
+  - Silica's own recipes are in `elements/silica/components/`.
+- **Boot splash:** the boot is verbose. Plymouth and `quiet` come with the graphical shell.
+- **Production keys:** the hardware-token signing keys, the update server, and shim-review (§1).

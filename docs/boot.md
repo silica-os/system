@@ -6,14 +6,16 @@ describes what the tools in `src/` do.
 ## Boot entries
 
 Silica has no bootloader. The firmware starts a signed UKI from the ESP through its own UEFI
-`Boot####` entries. The ESP is mounted at `/boot` on the running system (systemd-gpt-auto picks `/boot` when it is free; the tools fall back to `/efi`).
+`Boot####` entries. The ESP is mounted at `/boot` on the running system (systemd-gpt-auto picks
+`/boot` when it is free; the tools fall back to `/efi`).
 
 ### Files on the ESP
 
 - `\EFI\Linux\silica_<version>.efi`: one UKI per installed version (for example
   `silica_26.8.1.efi`).
-- `\EFI\BOOT\BOOTX64.EFI`: a copy of the current UKI for firmware that loses its NVRAM entries.
-  It is written by the image and the update service, not by `silica-boot`.
+- `\EFI\BOOT\BOOTX64.EFI`: a copy of the blessed UKI for firmware without (or with lost) NVRAM
+  entries. The image ships it; `silica-boot bless` and `silica-install` keep it equal to the
+  version that runs (written to a new file, then renamed over the old one).
 
 ### Entries
 
@@ -38,10 +40,10 @@ Silica has no bootloader. The firmware starts a signed UKI from the ESP through 
 
 ```
 silica-boot status
-silica-boot add --label L --path '\EFI\Linux\x.efi' [--options @1] [--esp /efi | --esp-device /dev/vda1]
+silica-boot add --label L --path '\EFI\Linux\x.efi' [--options @1] [--esp DIR | --esp-device /dev/vda1]
 silica-boot next NNNN
 silica-boot bless
-silica-boot sync [--esp /efi] [--booted VERSION]
+silica-boot sync [--esp DIR] [--booted VERSION]
 ```
 
 `add` reuses an entry with the same description, file and data (and repoints it at the given ESP)
@@ -62,12 +64,16 @@ and otherwise takes the lowest free `Boot####` number and appends it to `BootOrd
    Versions are compared as dotted numbers (`1.10` is newer than `1.9`; `1.0-rc1` is older
    than `1.0`).
 3. The machine reboots into the new version. The firmware has cleared `BootNext`.
-4. When `boot-complete.target` is reached, `silica-boot bless` moves `BootCurrent` to the front of
-   `BootOrder`. It does nothing when `BootCurrent` is not a Silica version entry (foreign entry,
-   recovery, or unset) and is idempotent.
+4. When `boot-complete.target` is reached, `silica-boot-bless.service` runs `silica-boot sync`
+   (which also creates the entries on the very first boot, when the firmware came through
+   `BOOTX64.EFI`) and then `silica-boot bless`. `bless` moves the running version's entry to the
+   front of `BootOrder`: the entry named by `BootCurrent`, or, after a boot through the fallback
+   path, the `Silica <IMAGE_VERSION>` entry. It then refreshes `BOOTX64.EFI`. It does nothing in
+   Recovery and is idempotent.
 5. If the new version never reaches step 4, the next reset uses the old `BootOrder`, which still
-   starts the previous version. `sync` runs again on that version and would set `BootNext` to the
-   failing version once more; a service that runs it should skip a version that failed to boot.
+   starts the previous version. Every version handed to `BootNext` is recorded in
+   `/var/lib/silica/boot/tried`; `sync` does not hand it to `BootNext` again ("did not start last
+   time"), and the next newer version is tried normally.
 
 Rollback by hand: the recovery menu (`silica-recovery`, option 2) sets `BootNext` to the Silica
 version below the current one (or the newest other one when running the oldest) and reboots.
@@ -75,10 +81,19 @@ Blessing then makes it permanent if it boots.
 
 ### Installer and recovery
 
-- `silica-install` lists whole disks from `/sys/block` (skipping loop, zram, sr, ram, dm, md and the
-  disks of the running `/efi`, `/usr` and `/`), asks the user to type the disk name, runs
-  `systemd-repart --dry-run=no --empty=force --definitions=/usr/lib/silica/install.repart.d <disk>`,
-  mounts the new ESP under `/run`, runs the same reconciliation as `sync` and puts the newest
-  version first in `BootOrder`. `--yes --disk /dev/X` skips the questions.
+- `silica-install`:
+  - lists whole disks from `/sys/block`, skipping loop, zram, sr, ram, dm, md and the disks of the
+    running ESP, `/usr` and `/`;
+  - asks the user to type the disk name; `--yes --disk /dev/X` skips the questions;
+  - runs `systemd-repart --dry-run=no --empty=force --definitions=/usr/lib/silica/install.repart.d
+    <disk>`, which copies the ESP and, block by block, the running system partitions;
+  - sets the copied `usr` and `usr-verity` partition UUIDs to the halves of the running
+    `usrhash=` (repart gives copies new UUIDs, and the UKI finds `/usr` by these);
+  - mounts the new ESP under `/run` and keeps only the running version's UKI there, which it also
+    makes the fallback loader;
+  - runs the same reconciliation as `sync` and puts that version first in `BootOrder`.
+
+  The new disk creates its B slot and data partition on its own first boot, sealed to its own
+  TPM.
 - `silica-recovery` offers: start Silica, roll back, install, erase all data and reset
   (`systemd-factory-reset request`, else the `FactoryResetRequest` EFI variable), console, shut down.
