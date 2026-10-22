@@ -3,7 +3,9 @@
 #
 #   tools/run-vm [--fresh] [--secure-boot] [--serial FILE | --serial-socket PATH]
 #                [--headless] [--debug-socket PATH] [--target-disk | --boot-target]
+#                [--monitor-socket PATH]
 #
+# --monitor-socket exposes the QEMU monitor (e.g. 'screendump FILE').
 # --target-disk attaches an empty 64G disk (out/vm/target.qcow2) for
 # silica-install; --boot-target then boots from that disk alone.
 #
@@ -24,7 +26,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="$ROOT/out"
 VM="$OUT/vm"
 IMG=registry.gitlab.com/freedesktop-sdk/infrastructure/freedesktop-sdk-docker-images/bst2:0a258dcf304505c338629e6a477b3d4b6ae3f01f
-fresh=0 secure=0 serial=stdio display="-display gtk" uki="" append="" creds="" debug="" target=0 only_target=0
+fresh=0 secure=0 serial=stdio display="-display gtk" uki="" append="" creds="" debug="" target=0 only_target=0 monitor=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --fresh) fresh=1 ;;
@@ -35,6 +37,7 @@ while [ $# -gt 0 ]; do
     --headless) display="-display none" ;;
     --target-disk) target=1 ;;
     --boot-target) only_target=1 ;;
+    --monitor-socket) monitor="-monitor unix:$2,server=on,wait=off"; shift ;;
     --uki) uki="$2"; shift ;;
     --append) append="$2"; shift ;;
     --credential) creds="$creds -smbios type=11,value=io.systemd.credential:$2"; shift ;;
@@ -89,4 +92,4 @@ qemu-system-x86_64 "$@" -machine q35,smm=on -accel kvm -cpu host -smp 4 -m 4G \
   -device virtio-blk-pci,drive=disk,bootindex=1 \
   -netdev user,id=net0 -device virtio-net-pci,netdev=net0 \
   -device virtio-vga -device qemu-xhci -device usb-tablet \
-  -serial "$serial" $debug $display $creds
+  -serial "$serial" $debug $monitor $display $creds
