@@ -1,0 +1,63 @@
+#!/usr/bin/env python3
+"""Drives the VM's serial console over the socket of run-vm --serial-socket.
+
+  tools/vm-console SOCKET LOG [STEP ...]
+
+Each STEP is "expect:REGEX", "send:TEXT" (a newline is added) or
+"sleep:SECONDS". Everything read from the console is appended to LOG.
+Exits non-zero when an expectation times out (TIMEOUT env, default 120 s).
+"""
+import os
+import re
+import socket
+import sys
+import time
+
+
+def main():
+    if len(sys.argv) < 3:
+        print(__doc__, file=sys.stderr)
+        return 2
+    path, log_path, steps = sys.argv[1], sys.argv[2], sys.argv[3:]
+    timeout = float(os.environ.get("TIMEOUT", "120"))
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    sock.connect(path)
+    sock.settimeout(0.5)
+    buf = ""
+    with open(log_path, "a", encoding="utf-8", errors="replace") as log:
+        def pump():
+            nonlocal buf
+            try:
+                data = sock.recv(65536)
+            except socket.timeout:
+                return
+            text = data.decode("utf-8", errors="replace")
+            log.write(text)
+            log.flush()
+            buf += text
+
+        for step in steps:
+            kind, _, arg = step.partition(":")
+            if kind == "send":
+                sock.sendall((arg + "\r").encode())
+            elif kind == "sleep":
+                end = time.time() + float(arg)
+                while time.time() < end:
+                    pump()
+            elif kind == "expect":
+                pattern = re.compile(arg)
+                end = time.time() + timeout
+                while not pattern.search(re.sub(r"\x1b\[[0-9;?]*[a-zA-Z]", "", buf)):
+                    if time.time() > end:
+                        print(f"timeout waiting for {arg!r}", file=sys.stderr)
+                        return 1
+                    pump()
+                buf = ""
+            else:
+                print(f"bad step: {step}", file=sys.stderr)
+                return 2
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

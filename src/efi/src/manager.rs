@@ -282,7 +282,11 @@ impl BootManager {
         .version())
     }
 
-    pub fn bless(&self) -> Result<Bless> {
+    /// Moves the running version's entry to the front of `BootOrder`.
+    /// `running` names the running version for boots that did not go through
+    /// a Silica entry (the firmware's fallback `\\EFI\\BOOT\\BOOTX64.EFI` on a
+    /// fresh install): its `Silica <version>` entry is blessed instead.
+    pub fn bless(&self, running: Option<&str>) -> Result<Bless> {
         let Some(current) = self.vars.boot_current()? else {
             return Ok(Bless::NotApplicable("BootCurrent is not set".into()));
         };
@@ -296,11 +300,30 @@ impl BootManager {
             }
         };
         match kind(&option) {
-            Kind::Other => Ok(Bless::NotApplicable(format!(
-                "{} ({}) is not a Silica entry",
-                boot_var_name(current),
-                option.description
-            ))),
+            Kind::Other => {
+                let label = running.map(|v| format!("{LABEL_PREFIX}{v}"));
+                let entry = match &label {
+                    Some(l) => self
+                        .valid_entries()?
+                        .into_iter()
+                        .find(|e| &e.option.description == l),
+                    None => None,
+                };
+                match entry {
+                    Some(e) if self.vars.boot_order()?.first() == Some(&e.number) => {
+                        Ok(Bless::AlreadyFirst(e.number))
+                    }
+                    Some(e) => {
+                        self.move_to_front(e.number)?;
+                        Ok(Bless::Blessed(e.number))
+                    }
+                    None => Ok(Bless::NotApplicable(format!(
+                        "{} ({}) is not a Silica entry",
+                        boot_var_name(current),
+                        option.description
+                    ))),
+                }
+            }
             Kind::Recovery => Ok(Bless::NotApplicable(
                 "booted into Silica Recovery, nothing to bless".into(),
             )),
@@ -711,9 +734,9 @@ mod tests {
         // reboot: firmware consumed BootNext and booted the new entry
         e.mgr.vars().clear_boot_next().unwrap();
         e.set_current(new);
-        assert_eq!(e.mgr.bless().unwrap(), Bless::Blessed(new));
+        assert_eq!(e.mgr.bless(None).unwrap(), Bless::Blessed(new));
         assert_eq!(e.mgr.vars().boot_order().unwrap()[0], new);
-        assert_eq!(e.mgr.bless().unwrap(), Bless::AlreadyFirst(new));
+        assert_eq!(e.mgr.bless(None).unwrap(), Bless::AlreadyFirst(new));
         // sync now points recovery at the new version and sets nothing
         e.sync();
         assert_eq!(e.mgr.vars().boot_next().unwrap(), None);
@@ -820,17 +843,59 @@ mod tests {
         let e = env("mgr-bless");
         e.uki("1.0.0");
         e.sync();
-        assert!(matches!(e.mgr.bless().unwrap(), Bless::NotApplicable(_)));
+        assert!(matches!(
+            e.mgr.bless(None).unwrap(),
+            Bless::NotApplicable(_)
+        ));
         let (w, _) = e
             .mgr
             .add("Windows", &e.esp, "\\w.efi", None, Position::Append)
             .unwrap();
         e.set_current(w);
-        assert!(matches!(e.mgr.bless().unwrap(), Bless::NotApplicable(_)));
+        assert!(matches!(
+            e.mgr.bless(None).unwrap(),
+            Bless::NotApplicable(_)
+        ));
         e.set_current(e.number_of(RECOVERY_LABEL));
-        assert!(matches!(e.mgr.bless().unwrap(), Bless::NotApplicable(_)));
+        assert!(matches!(
+            e.mgr.bless(None).unwrap(),
+            Bless::NotApplicable(_)
+        ));
         e.set_current(99);
-        assert!(matches!(e.mgr.bless().unwrap(), Bless::NotApplicable(_)));
+        assert!(matches!(
+            e.mgr.bless(None).unwrap(),
+            Bless::NotApplicable(_)
+        ));
+        e.cleanup();
+    }
+
+    #[test]
+    fn bless_running_version_after_fallback_boot() {
+        let e = env("mgr-bless-fallback");
+        let (fallback, _) = e
+            .mgr
+            .add(
+                "UEFI Misc Device",
+                &e.esp,
+                "\\EFI\\BOOT\\BOOTX64.EFI",
+                None,
+                Position::Append,
+            )
+            .unwrap();
+        e.uki("1.0.0");
+        e.sync();
+        e.set_current(fallback);
+        let silica = e.number_of("Silica 1.0.0");
+        assert_eq!(e.mgr.bless(Some("1.0.0")).unwrap(), Bless::Blessed(silica));
+        assert_eq!(e.mgr.vars().boot_order().unwrap().first(), Some(&silica));
+        assert_eq!(
+            e.mgr.bless(Some("1.0.0")).unwrap(),
+            Bless::AlreadyFirst(silica)
+        );
+        assert!(matches!(
+            e.mgr.bless(Some("9.9.9")).unwrap(),
+            Bless::NotApplicable(_)
+        ));
         e.cleanup();
     }
 

@@ -27,6 +27,8 @@ depends:
 - freedesktop-sdk.bst:components/keyutils.bst
 # Storage and encryption.
 - freedesktop-sdk.bst:components/cryptsetup.bst
+# device-mapper udev rules: without them cryptsetup waits forever on udev.
+- freedesktop-sdk.bst:components/lvm2.bst
 - freedesktop-sdk.bst:components/tpm2-tss.bst
 - freedesktop-sdk.bst:components/tpm2-tools.bst
 - freedesktop-sdk.bst:components/btrfs-progs.bst

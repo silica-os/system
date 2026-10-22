@@ -1,5 +1,5 @@
 [Unit]
-Description=Mark the running Silica version as good
+Description=Create Silica's boot entries and mark the running version as good
 Documentation=file:/usr/share/doc/silica/boot.md
 Requires=boot-complete.target
 After=boot-complete.target local-fs.target
@@ -7,6 +7,9 @@ ConditionPathExists=/sys/firmware/efi/efivars
 
 [Service]
 Type=oneshot
+# sync creates the UEFI entries on the first boot (which comes through the
+# firmware's fallback path) and keeps them in step with the ESP.
+ExecStartPre=-/usr/libexec/silica/silica-boot sync
 ExecStart=/usr/libexec/silica/silica-boot bless
 RemainAfterExit=yes
 

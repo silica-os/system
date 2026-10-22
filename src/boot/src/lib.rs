@@ -74,7 +74,7 @@ pub fn run(args: &[String], roots: Roots, out: &mut dyn Write) -> std::result::R
         "status" => status(&mgr, out)?,
         "add" => add(&mgr, &roots, &parsed, out)?,
         "next" => next(&mgr, &parsed, out)?,
-        "bless" => bless(&mgr, out)?,
+        "bless" => bless(&mgr, &roots, out)?,
         "sync" => sync(&mgr, &roots, &parsed, out)?,
         other => return Err(Failure::Usage(format!("unknown command '{other}'"))),
     }
@@ -239,8 +239,9 @@ fn next(
     Ok(())
 }
 
-fn bless(mgr: &BootManager, out: &mut dyn Write) -> Result<()> {
-    let msg = match mgr.bless()? {
+fn bless(mgr: &BootManager, roots: &Roots, out: &mut dyn Write) -> Result<()> {
+    let running = os_release_version(roots);
+    let msg = match mgr.bless(running.as_deref())? {
         Bless::Blessed(n) => format!("{} is now first in BootOrder\n", hex4(n)),
         Bless::AlreadyFirst(n) => format!("{} is already first in BootOrder\n", hex4(n)),
         Bless::NotApplicable(why) => format!("nothing to bless: {why}\n"),

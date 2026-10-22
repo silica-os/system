@@ -19,3 +19,10 @@ disable systemd-networkd.service
 disable systemd-networkd.socket
 disable systemd-sysupdate.timer
 disable systemd-sysupdate-reboot.timer
+disable systemd-pcrlock-secureboot-policy.service
+disable systemd-pcrlock-firmware-code.service
+disable systemd-pcrlock-firmware-config.service
+disable systemd-pcrlock-machine-id.service
+disable systemd-pcrlock-make-policy.service
+disable systemd-pcrlock-file-system.service
+disable systemd-pcrlock-secureboot-authority.service

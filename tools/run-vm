@@ -1,7 +1,11 @@
 #!/bin/sh
 # Boots the Silica disk image in QEMU with UEFI (OVMF) and an emulated TPM2.
 #
-#   tools/run-vm [--fresh] [--secure-boot] [--serial FILE] [--headless]
+#   tools/run-vm [--fresh] [--secure-boot] [--serial FILE | --serial-socket PATH]
+#                [--headless] [--debug-socket PATH]
+#
+# --debug-socket adds a second serial port (ttyS1) with a root debug shell
+# (systemd-stub appends the extra kernel argument only with Secure Boot off).
 #                [--uki FILE --append CMDLINE] [--credential NAME=VALUE]...
 #
 # --uki boots a UKI through QEMU's direct kernel boot, with CMDLINE as its
@@ -17,12 +21,14 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="$ROOT/out"
 VM="$OUT/vm"
 IMG=registry.gitlab.com/freedesktop-sdk/infrastructure/freedesktop-sdk-docker-images/bst2:0a258dcf304505c338629e6a477b3d4b6ae3f01f
-fresh=0 secure=0 serial=stdio display="-display gtk" uki="" append="" creds=""
+fresh=0 secure=0 serial=stdio display="-display gtk" uki="" append="" creds="" debug=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --fresh) fresh=1 ;;
     --secure-boot) secure=1 ;;
     --serial) serial="file:$2"; shift ;;
+    --serial-socket) serial="unix:$2,server=on,wait=off"; shift ;;
+    --debug-socket) debug="-serial unix:$2,server=on,wait=off -smbios type=11,value=io.systemd.stub.kernel-cmdline-extra=systemd.debug_shell=ttyS1"; shift ;;
     --headless) display="-display none" ;;
     --uki) uki="$2"; shift ;;
     --append) append="$2"; shift ;;
@@ -67,4 +73,4 @@ qemu-system-x86_64 "$@" -machine q35,smm=on -accel kvm -cpu host -smp 4 -m 4G \
   -device virtio-blk-pci,drive=disk,bootindex=1 \
   -netdev user,id=net0 -device virtio-net-pci,netdev=net0 \
   -device virtio-vga -device qemu-xhci -device usb-tablet \
-  -serial "$serial" $display $creds
+  -serial "$serial" $debug $display $creds
