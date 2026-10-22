@@ -26,3 +26,4 @@ disable systemd-pcrlock-machine-id.service
 disable systemd-pcrlock-make-policy.service
 disable systemd-pcrlock-file-system.service
 disable systemd-pcrlock-secureboot-authority.service
+enable silica-ipe.service

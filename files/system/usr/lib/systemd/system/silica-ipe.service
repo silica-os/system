@@ -1,0 +1,19 @@
+[Unit]
+Description=Enforce Silica's code integrity policy
+Documentation=file:/usr/share/doc/silica/base-system.md
+# Code runs only from the signed system image (dm-verity), the initrd and
+# files with an fs-verity signature from a trusted key; the kernel refuses
+# everything else with EACCES. See docs/base-system.md, section 4.
+DefaultDependencies=no
+After=sys-kernel-security.mount
+Before=sysinit.target
+ConditionPathExists=/sys/kernel/security/ipe
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/sh -c 'cat /usr/lib/silica/ipe/silica.p7s > /sys/kernel/security/ipe/new_policy'
+ExecStart=/bin/sh -c 'echo -n 1 > /sys/kernel/security/ipe/policies/silica/active'
+
+[Install]
+WantedBy=sysinit.target

@@ -1,0 +1,7 @@
+policy_name=silica policy_version=0.1.0
+DEFAULT action=ALLOW
+
+DEFAULT op=EXECUTE action=DENY
+op=EXECUTE boot_verified=TRUE action=ALLOW
+op=EXECUTE dmverity_signature=TRUE action=ALLOW
+op=EXECUTE fsverity_signature=TRUE action=ALLOW

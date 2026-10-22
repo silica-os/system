@@ -34,6 +34,13 @@ config:
     prepare-image.sh --sysroot /sysroot --seed "%{uuidnamespace}" --noboot --noroot >/dev/null
 
   - |
+    # The code integrity policy, signed so the kernel accepts it.
+    openssl smime -sign -binary -noattr -nodetach -nosmimecap -nocerts -outform DER \
+      -signer /keys/system.crt -inkey /keys/system.key \
+      -in /sysroot/usr/lib/silica/ipe/silica.pol \
+      -out /sysroot/usr/lib/silica/ipe/silica.p7s
+
+  - |
     # Factory defaults for /etc; the data partition starts with an empty /etc.
     mkdir -p /sysroot/usr/share/factory/etc
     cp -a /sysroot/etc/. /sysroot/usr/share/factory/etc/
