@@ -1,0 +1,8 @@
+[package]
+name = "silica-install"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+silica-efi = { path = "../efi" }
