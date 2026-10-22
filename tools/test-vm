@@ -15,7 +15,10 @@ the debug shell on ttyS1, which works only with Secure Boot off.
                   tools/dev-sysext --build-only compositor-tests), starts
                   tester's graphical session on tty2 and checks the compositor
                   on DRM: ready, a client window, frames, the screen, a VT switch.
---gpu             passes the GPU to tools/run-vm (otherwise llvmpipe).
+--apps            with --desktop: also installs compositor-apps (GTK 3, GTK 4 and
+                  Qt 6 apps, tools/dev-sysext --build-only compositor-apps) and
+                  checks that each maps its window.
+--gpu             passes the GPU to tools/run-vm (otherwise software rendering).
 --keep            leaves out/vm and the logs in place after a failure.
 
 Logs go to /dev/shm/silica-test-*. Exits non-zero when a check fails.
@@ -328,6 +331,13 @@ SESSION_CHECKS = [
      "f() { journalctl -q _SYSTEMD_USER_UNIT=silica-test-client.service -o cat | sed -n 's/^frames //p' | tail -n 1; };"
      " for i in $(seq 20); do a=$(f); [ -n \"$a\" ] && break; sleep 1; done;"
      " sleep 3; b=$(f); [ -n \"$a\" ] && [ \"$b\" -gt \"$a\" ]"),
+    # IPE lets anonymous executable memory through; SELinux's execmem decides it, and the
+    # user's domain is not entitled to JIT.
+    ("JIT runs past IPE, and SELinux decides it per domain",
+     f"{USER} --wait --pipe /usr/libexec/silica/tests/silica-test-client --jit"
+     " && for i in $(seq 10); do journalctl -b -q -o cat _TRANSPORT=audit"
+     " | grep -Eq 'denied +\\{ execmem \\}.*scontext=user_u:' && break; sleep 1; done"
+     " && journalctl -b -q -o cat _TRANSPORT=audit | grep -Eq 'denied +\\{ execmem \\}.*scontext=user_u:'"),
 ]
 VT_CHECKS = [
     ("the session survives a VT switch",
@@ -336,6 +346,20 @@ VT_CHECKS = [
      f" {ACTIVE}"
      " && a=$(f) && sleep 3 && b=$(f) && [ \"$b\" -gt \"$a\" ]"),
 ]
+# Real apps, from the compositor-apps extension (--apps): each maps its window and keeps running.
+APPS = [
+    ("a GTK 3 app maps a window", "gtk3-demo", "gtk3-demo"),
+    ("a GTK 4 app maps a window", "gtk4-demo", "org.gtk.Demo4"),
+    ("a Qt 6 app maps a window", "/usr/libexec/silica/tests/silica-qt-test", "dev.frascella.Silica.QtTest"),
+]
+
+
+def app_check(index, command, app_id):
+    unit = f"silica-test-app{index}"
+    listed = f"{USER} --wait --pipe silica-cli window.list | grep -qwF {app_id}"
+    return (f"{USER} --unit={unit} -E GDK_BACKEND=wayland -E QT_QPA_PLATFORM=wayland {command}"
+            f" && for i in $(seq 30); do {listed} && break; sleep 1; done; {listed}"
+            f" && sleep 3 && systemctl -q -M tester@.host --user is-active {unit}.service")
 
 
 def client_pixels(path):
@@ -413,18 +437,22 @@ def show(vm, what, command):
         print(f"      {line}", flush=True)
 
 
-def test_desktop(report, vm, sysext):
+def test_desktop(report, vm, sysext, apps):
     ext = f"{ROOT}/out/extensions"
-    raw = f"silica-{sysext}.raw"
-    report.must(os.path.exists(f"{ext}/{raw}"), f"{ext}/{raw} exists")
+    names = [sysext, *(["compositor-apps"] if apps else [])]
+    for name in names:
+        report.must(os.path.exists(f"{ext}/silica-{name}.raw"), f"{ext}/silica-{name}.raw exists")
     server = subprocess.Popen([sys.executable, "-m", "http.server", "8080"], cwd=ext,
                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     try:
-        report.check(vm, "the signed test extension merges and its code runs",
-                     "mkdir -p /var/lib/extensions"
-                     " && curl -fsS --retry 20 --retry-delay 1 --retry-connrefused"
-                     f" -o /var/lib/extensions/{raw} http://10.0.2.2:8080/{raw}"
-                     f" && systemd-sysext refresh >/dev/null && systemd-sysext status | grep -q silica-{sysext}"
+        fetch = " && ".join(
+            "curl -fsS --retry 20 --retry-delay 1 --retry-connrefused"
+            f" -o /var/lib/extensions/silica-{name}.raw http://10.0.2.2:8080/silica-{name}.raw"
+            for name in names)
+        merged = " && ".join(f"systemd-sysext status | grep -q silica-{name}" for name in names)
+        report.check(vm, "the signed test extensions merge and their code runs",
+                     f"mkdir -p /var/lib/extensions && {fetch}"
+                     f" && systemd-sysext refresh >/dev/null && {merged}"
                      " && { /usr/libexec/silica/tests/silica-test-client --bogus 2>/dev/null; [ $? = 2 ]; }")
     finally:
         server.terminate()
@@ -456,6 +484,11 @@ def test_desktop(report, vm, sysext):
         report.failed += 1
     for name, command in VT_CHECKS:
         report.check(vm, name, command, timeout=180)
+    for index, (name, command, app_id) in enumerate(APPS if apps else []):
+        if not report.check(vm, name, app_check(index, command, app_id), timeout=180):
+            show(vm, f"{command} journal", f"journalctl -q --user-unit=silica-test-app{index}.service"
+                 f" _UID=$(id -u tester) -o cat | tail -n 15 | cut -c1-400;"
+                 f" {USER} --wait --pipe silica-cli window.list | cut -c1-400")
     report.check(vm, "the compositor logged no errors",
                  "! journalctl -q _SYSTEMD_USER_UNIT=silica-compositor.service -p err -o cat | grep .")
 
@@ -469,6 +502,8 @@ def main():
     parser.add_argument("--keep", action="store_true")
     parser.add_argument("--sysext", default="compositor-tests",
                         help="the extension --desktop installs (compositor-dev: a dev build)")
+    parser.add_argument("--apps", action="store_true",
+                        help="with --desktop: also install compositor-apps and check GTK and Qt apps")
     args = parser.parse_args()
 
     creds = []
@@ -482,7 +517,7 @@ def main():
     try:
         boot_and_check(report, vm, BASE_CHECKS)
         if args.desktop:
-            test_desktop(report, vm, args.sysext)
+            test_desktop(report, vm, args.sysext, args.apps)
         if args.update:
             test_update(report, vm, args.update)
         if args.install:

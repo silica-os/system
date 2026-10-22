@@ -245,7 +245,7 @@ Xwayland: open point, §5.
   The compositor exports `WAYLAND_DISPLAY` to the user manager and the session bus. The graphical
   login comes with AppKit.
 - **GPU in the VM:** `tools/run-vm --gpu virgl` (OpenGL) or `--gpu venus` (Vulkan); without it
-  Mesa draws with llvmpipe.
+  the compositor draws with softpipe, because llvmpipe is a JIT (see JIT below).
 
 ### System extensions and the dev loop
 
@@ -325,6 +325,16 @@ Built and verified in QEMU (OVMF, swtpm, KVM):
     and fixes the copied partitions' verity UUIDs.
   - The installed disk boots on its own and builds its B slot and data partition on first boot.
 - **IPE:** the policy is active and enforcing.
+- **JIT is an entitlement, as on macOS:**
+  - IPE refuses every file that is not signed, but lets anonymous executable memory through.
+    That is the `anonymous_memory=TRUE` property, our kernel patch
+    (`patches/linux/ipe-anonymous-memory.patch`).
+  - SELinux's `execmem` decides JIT per domain. `allow_execmem` stays off, so `user_t` has none.
+    The `silica_jit` module's `silica_jit_entitled(domain)` grants it, and the app format will
+    grant it to the apps that declare it.
+  - The compositor holds no entitlement and renders with softpipe when no GPU driver binds.
+  - While SELinux is permissive (system#11), the denial is only logged. `tools/test-vm
+    --desktop` checks both that the code runs and that SELinux logs the denial.
 - **SELinux:** the `silica` policy loads on every boot, the first one included, in permissive mode.
   - The policy is the reference policy, built monolithic (MCS, systemd) by
     `elements/silica/components/refpolicy.bst`. It lives in `/usr/lib/selinux/silica`, sealed with

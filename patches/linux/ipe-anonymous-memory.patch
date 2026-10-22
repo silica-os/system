@@ -1,0 +1,87 @@
+diff --git a/security/ipe/audit.c b/security/ipe/audit.c
+index 93fb59f..48e66bc 100644
+--- a/security/ipe/audit.c
++++ b/security/ipe/audit.c
+@@ -62,6 +62,8 @@ static const char *const audit_prop_names[__IPE_PROP_MAX] = {
+ 	"fsverity_digest=",
+ 	"fsverity_signature=FALSE",
+ 	"fsverity_signature=TRUE",
++	"anonymous_memory=FALSE",
++	"anonymous_memory=TRUE",
+ };
+ 
+ /**
+diff --git a/security/ipe/eval.c b/security/ipe/eval.c
+index 4a7be96..0d03417 100644
+--- a/security/ipe/eval.c
++++ b/security/ipe/eval.c
+@@ -281,6 +281,23 @@ static bool evaluate_fsv_sig_true(const struct ipe_eval_ctx *const ctx)
+  * * %true	- The current @ctx match the @p
+  * * %false	- The current @ctx doesn't match the @p
+  */
++/**
++ * evaluate_anon_mem() - Evaluate @ctx against an anonymous memory property.
++ * @ctx: Supplies a pointer to the context being evaluated.
++ *
++ * Executable memory that no file backs (mmap or mprotect with PROT_EXEC on
++ * anonymous memory: JIT compilers) has no integrity property to check. A
++ * policy can leave it to another LSM, such as SELinux's execmem permission.
++ *
++ * Return:
++ * * %true	- The operation maps anonymous memory executable
++ * * %false	- The operation is on a file
++ */
++static bool evaluate_anon_mem(const struct ipe_eval_ctx *const ctx)
++{
++	return !ctx->file && (ctx->hook == IPE_HOOK_MMAP || ctx->hook == IPE_HOOK_MPROTECT);
++}
++
+ static bool evaluate_property(const struct ipe_eval_ctx *const ctx,
+ 			      struct ipe_prop *p)
+ {
+@@ -301,6 +318,10 @@ static bool evaluate_property(const struct ipe_eval_ctx *const ctx,
+ 		return evaluate_fsv_sig_false(ctx);
+ 	case IPE_PROP_FSV_SIG_TRUE:
+ 		return evaluate_fsv_sig_true(ctx);
++	case IPE_PROP_ANON_MEM_FALSE:
++		return !evaluate_anon_mem(ctx);
++	case IPE_PROP_ANON_MEM_TRUE:
++		return evaluate_anon_mem(ctx);
+ 	default:
+ 		return false;
+ 	}
+diff --git a/security/ipe/policy.h b/security/ipe/policy.h
+index 5bfbdbd..0becc2d 100644
+--- a/security/ipe/policy.h
++++ b/security/ipe/policy.h
+@@ -39,6 +39,8 @@ enum ipe_prop_type {
+ 	IPE_PROP_FSV_DIGEST,
+ 	IPE_PROP_FSV_SIG_FALSE,
+ 	IPE_PROP_FSV_SIG_TRUE,
++	IPE_PROP_ANON_MEM_FALSE,
++	IPE_PROP_ANON_MEM_TRUE,
+ 	__IPE_PROP_MAX
+ };
+ 
+diff --git a/security/ipe/policy_parser.c b/security/ipe/policy_parser.c
+index 6fa5beb..1b18325 100644
+--- a/security/ipe/policy_parser.c
++++ b/security/ipe/policy_parser.c
+@@ -281,6 +281,8 @@ static const match_table_t property_tokens = {
+ 	{IPE_PROP_FSV_DIGEST,		"fsverity_digest=%s"},
+ 	{IPE_PROP_FSV_SIG_FALSE,	"fsverity_signature=FALSE"},
+ 	{IPE_PROP_FSV_SIG_TRUE,		"fsverity_signature=TRUE"},
++	{IPE_PROP_ANON_MEM_FALSE,	"anonymous_memory=FALSE"},
++	{IPE_PROP_ANON_MEM_TRUE,	"anonymous_memory=TRUE"},
+ 	{IPE_PROP_INVALID,		NULL}
+ };
+ 
+@@ -331,6 +333,8 @@ static int parse_property(char *t, struct ipe_rule *r)
+ 	case IPE_PROP_DMV_SIG_TRUE:
+ 	case IPE_PROP_FSV_SIG_FALSE:
+ 	case IPE_PROP_FSV_SIG_TRUE:
++	case IPE_PROP_ANON_MEM_FALSE:
++	case IPE_PROP_ANON_MEM_TRUE:
+ 		p->type = token;
+ 		break;
+ 	default:

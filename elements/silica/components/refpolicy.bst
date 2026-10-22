@@ -37,6 +37,31 @@ config:
     /Users /home
     /usr/lib/selinux /etc/selinux
     EOF
+  - |
+    # JIT is an entitlement: IPE lets anonymous executable memory through, SELinux's
+    # execmem decides it per domain. allow_execmem stays off, so user_t gets none;
+    # the app format grants it to the domains of the apps that declare it.
+    cat >policy/modules/system/silica_jit.te <<'EOF'
+    policy_module(silica_jit)
+    EOF
+    cat >policy/modules/system/silica_jit.if <<'EOF'
+    ## <summary>The JIT entitlement: executable anonymous memory, per domain.</summary>
+
+    ########################################
+    ## <summary>
+    ##	Allow the domain to map anonymous memory executable, for a JIT.
+    ## </summary>
+    ## <param name="domain">
+    ##	<summary>
+    ##	Domain of an app entitled to JIT.
+    ##	</summary>
+    ## </param>
+    #
+    interface(`silica_jit_entitled',`
+    	allow $1 self:process execmem;
+    ')
+    EOF
+    : >policy/modules/system/silica_jit.fc
   - make %{policy-args} conf
 
   build-commands:
