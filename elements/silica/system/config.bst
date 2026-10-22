@@ -17,6 +17,7 @@ config:
   install-commands:
   - |
     cp -a usr "%{install-root}/usr"
+    cp -a etc "%{install-root}/etc"
     find "%{install-root}/usr" -type f -exec sed -i \
       -e 's|@VERSION@|%{silica-version}|g' \
       -e 's|@UPDATE_URL@|%{update-url}|g' \

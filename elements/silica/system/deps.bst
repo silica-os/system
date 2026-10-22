@@ -66,5 +66,21 @@ depends:
 - freedesktop-sdk.bst:components/geoclue.bst
 - freedesktop-sdk.bst:components/noto-fonts.bst
 - freedesktop-sdk.bst:components/noto-emoji.bst
+# Silica's own recipes.
+- silica/components/zsh.bst
+- silica/components/thermald.bst
+- silica/components/bolt.bst
+- silica/components/power-profiles-daemon.bst
+- silica/components/switcheroo-control.bst
+- silica/components/libfprint.bst
+- silica/components/fprintd.bst
+- silica/components/espeak-ng.bst
+- silica/components/brltty.bst
+- silica/components/smartmontools.bst
+- silica/components/nvme-cli.bst
+- silica/components/sane-backends.bst
+- silica/components/sane-airscan.bst
+- silica/components/intel-microcode.bst
+- silica/components/openvpn.bst
 # Silica.
 - silica/system/config.bst

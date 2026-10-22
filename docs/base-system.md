@@ -263,8 +263,13 @@ and a bundling tool will make that easy for open-source apps.
 ## 6. Not done yet
 
 - kCFI needs a Clang-built kernel; the kernel is built with GCC for now.
-- zsh, thermald, bolt, fprintd, power-profiles-daemon, switcheroo-control, brltty, espeak-ng,
-  smartmontools, nvme-cli, ipp-usb, sane-airscan, Intel microcode and OpenVPN have no
-  freedesktop-sdk recipe: Silica adds its own elements for them.
+- freedesktop-sdk has no recipe for zsh, thermald, bolt, fprintd (and libfprint),
+  power-profiles-daemon, switcheroo-control, brltty, espeak-ng (and pcaudiolib), smartmontools,
+  nvme-cli, sane-backends, sane-airscan, Intel microcode and OpenVPN: Silica's own elements are in
+  `elements/silica/components/` (tcl is build-only, for brltty's udev rules). Still missing:
+  ipp-usb, speech-dispatcher.
+- zsh is the login shell of users created by homed's first-boot wizard (`--shell`) and by
+  `useradd` (`/etc/default/useradd`); root keeps bash. Users made with `homectl create` need
+  `--shell=/usr/bin/zsh` (systemd's built-in default is bash).
 - SELinux policy and IPE policy (the kernel features are built in).
 - Signed sysupdate manifests (`Verify=false` until the update server signs `SHA256SUMS`).
