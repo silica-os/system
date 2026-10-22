@@ -1,0 +1,17 @@
+[Unit]
+Description=Silica compositor
+Documentation=https://github.com/silica-os/compositor
+# Started by silica-session from a login on a VT; it owns the graphical session.
+BindsTo=graphical-session.target
+Before=graphical-session.target
+Wants=graphical-session-pre.target
+After=graphical-session-pre.target
+
+[Service]
+Type=notify
+Slice=session.slice
+Environment=XDG_SESSION_TYPE=wayland XDG_CURRENT_DESKTOP=Silica
+ExecStart=/usr/bin/silica-compositor
+# A crash ends the session cleanly instead of leaving a dead VT.
+Restart=no
+TimeoutStartSec=30

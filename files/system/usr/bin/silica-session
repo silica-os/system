@@ -1,0 +1,15 @@
+#!/bin/sh
+# Starts Silica's graphical session from a console login: the compositor runs
+# as the systemd user unit silica-compositor.service, on this login's logind
+# session (libseat finds it through XDG_SESSION_ID), until it exits.
+set -eu
+if systemctl --user -q is-active silica-compositor.service; then
+  echo "silica-session: the session is already running" >&2
+  exit 1
+fi
+systemctl --user reset-failed
+systemctl --user import-environment XDG_SESSION_ID XDG_SEAT XDG_VTNR
+rc=0
+systemctl --user --wait start silica-compositor.service || rc=$?
+systemctl --user unset-environment WAYLAND_DISPLAY XDG_SESSION_ID XDG_SEAT XDG_VTNR
+exit "$rc"

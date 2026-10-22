@@ -232,6 +232,33 @@ Kept out of the image:
 
 Xwayland: open point, §5.
 
+### The graphical session
+
+- **The compositor** ([silica-os/compositor](https://github.com/silica-os/compositor)) is built
+  by `elements/silica/desktop/compositor.bst` from a pinned commit (`tools/update-compositor REF`
+  moves the commit and regenerates the crate list from its `Cargo.lock`). The image carries
+  `silica-compositor`, `silica-cli` and `silica-action` (`compositor-system.bst`); the test
+  client stays out.
+- **Starting it:** `silica-session` from a console login runs the user unit
+  `silica-compositor.service` (`Type=notify`, bound to `graphical-session.target`). libseat
+  takes the devices from logind through the login's session, so a VT switch hands them back.
+  The compositor exports `WAYLAND_DISPLAY` to the user manager and the session bus. The graphical
+  login comes with AppKit.
+- **GPU in the VM:** `tools/run-vm --gpu virgl` (OpenGL) or `--gpu venus` (Vulkan); without it
+  Mesa draws with llvmpipe.
+
+### System extensions and the dev loop
+
+IPE runs code only from signed dm-verity images, so anything outside the sealed `/usr` comes as
+a signed system extension: an erofs `/usr` with its verity tree and the root hash signed by the
+system key, in a GPT image (`elements/silica/extensions/sysext.yml`). `systemd-sysext` merges
+it from `/var/lib/extensions`.
+
+- `compositor-tests`: `silica-test-client`, for `tools/test-vm --desktop`.
+- `compositor-dev`: the compositor built from the local checkout, through a BuildStream
+  workspace. `tools/dev-sysext` builds it, copies it into the running VM through the debug shell
+  and merges it: a change runs in the VM without an image rebuild or a push.
+
 ## 4. What the base gives the app format
 
 The app format is its own spec (drag-and-drop install, per-app widgets). From the base it needs:

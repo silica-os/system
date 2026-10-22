@@ -1,0 +1,67 @@
+#!/bin/sh
+# Builds a signed system extension and, unless --build-only, installs it into
+# the running VM (tools/run-vm --debug-socket PATH) and merges it.
+#
+#   tools/dev-sysext [--build-only] [--debug-socket PATH] [NAME]
+#
+# NAME is an element of elements/silica/extensions (default: compositor-dev).
+# compositor-dev builds the compositor from the local checkout
+# (~/silica/compositor or $SILICA_COMPOSITOR) through a BuildStream workspace
+# in .workspaces/compositor, so a change runs in the VM without an image
+# rebuild and without a push. The image keeps building from the pinned ref.
+# The extension lands in out/extensions/silica-NAME.raw.
+set -eu
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+SRC="${SILICA_COMPOSITOR:-$HOME/silica/compositor}"
+build_only=0 debug=/dev/shm/silica-debug.sock name=compositor-dev
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --build-only) build_only=1 ;;
+    --debug-socket) debug="$2"; shift ;;
+    -*) echo "unknown option: $1" >&2; exit 2 ;;
+    *) name="$1" ;;
+  esac
+  shift
+done
+element="silica/extensions/$name.bst"
+[ -f "$ROOT/elements/$element" ] || { echo "no such extension: $element" >&2; exit 2; }
+bst() { "$ROOT/tools/bst" --no-colors "$@"; }
+
+if [ "$name" = compositor-dev ]; then
+  ws="$ROOT/.workspaces/compositor"
+  if [ -d "$ws" ]; then
+    bst workspace open --no-checkout --directory /src/.workspaces/compositor silica/desktop/compositor.bst
+  else
+    bst workspace open --directory /src/.workspaces/compositor silica/desktop/compositor.bst
+  fi
+  trap 'bst workspace close silica/desktop/compositor.bst >/dev/null 2>&1 || true' EXIT
+  # The vendored crates come from the element's cargo2 source: a changed
+  # Cargo.lock needs tools/update-compositor and a fresh workspace.
+  if ! cmp -s "$SRC/Cargo.lock" "$ws/Cargo.lock"; then
+    echo "Cargo.lock changed: run tools/update-compositor and rm -rf .workspaces/compositor" >&2
+    exit 1
+  fi
+  rsync -a --delete --exclude /.git --exclude /target --exclude /.vendored-crates \
+    --exclude /.cargo --exclude /.bstproject.yaml "$SRC/" "$ws/"
+fi
+
+bst build "$element"
+out="$ROOT/out/extensions"
+rm -rf "$out/.checkout"
+mkdir -p "$out"
+bst artifact checkout "$element" --directory "out/extensions/.checkout"
+mv "$out"/.checkout/*.raw "$out/"
+rm -rf "$out/.checkout"
+raw="silica-$name.raw"
+ls -l "$out/$raw"
+[ "$build_only" = 1 ] && exit 0
+
+# The VM fetches from the host through QEMU's user network.
+python3 -m http.server 8080 --directory "$out" >/dev/null 2>&1 &
+server=$!
+trap 'kill $server 2>/dev/null; bst workspace close silica/desktop/compositor.bst >/dev/null 2>&1 || true' EXIT
+sleep 1
+TIMEOUT=120 "$ROOT/tools/vm-console" "$debug" /dev/shm/silica-dev-sysext.log \
+  "send:mkdir -p /var/lib/extensions && curl -fsSo /var/lib/extensions/$raw http://10.0.2.2:8080/$raw && systemd-sysext refresh && echo SYSEXT-\$((1+1))-OK" \
+  "expect:SYSEXT-2-OK"
+echo "$raw merged; restart the session to use it"

@@ -3,8 +3,10 @@
 #
 #   tools/run-vm [--fresh] [--secure-boot] [--serial FILE | --serial-socket PATH]
 #                [--headless] [--debug-socket PATH] [--target-disk | --boot-target]
-#                [--monitor-socket PATH]
+#                [--monitor-socket PATH] [--gpu virgl|venus]
 #
+# --gpu gives the VM a virtio-gpu with host OpenGL (virgl) or Vulkan (venus);
+# without it Mesa renders in software (llvmpipe).
 # --monitor-socket exposes the QEMU monitor (e.g. 'screendump FILE').
 # --target-disk attaches an empty 64G disk (out/vm/target.qcow2) for
 # silica-install; --boot-target then boots from that disk alone.
@@ -26,7 +28,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="$ROOT/out"
 VM="$OUT/vm"
 IMG=registry.gitlab.com/freedesktop-sdk/infrastructure/freedesktop-sdk-docker-images/bst2:0a258dcf304505c338629e6a477b3d4b6ae3f01f
-fresh=0 secure=0 serial=stdio display="-display gtk" uki="" append="" creds="" debug="" target=0 only_target=0 monitor=""
+gpu="" fresh=0 secure=0 serial=stdio display="-display gtk" uki="" append="" creds="" debug="" target=0 only_target=0 monitor=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --fresh) fresh=1 ;;
@@ -37,6 +39,7 @@ while [ $# -gt 0 ]; do
     --headless) display="-display none" ;;
     --target-disk) target=1 ;;
     --boot-target) only_target=1 ;;
+    --gpu) gpu="$2"; shift ;;
     --monitor-socket) monitor="-monitor unix:$2,server=on,wait=off"; shift ;;
     --uki) uki="$2"; shift ;;
     --append) append="$2"; shift ;;
@@ -70,6 +73,20 @@ i=0; while [ ! -S "$VM/tpm/swtpm.sock" ] && [ $i -lt 50 ]; do sleep 0.1; i=$((i+
 set --
 if [ -n "$uki" ]; then set -- -kernel "$uki" -append "$append"; fi
 
+vga="-device virtio-vga"
+case "$gpu" in
+  "") ;;
+  virgl) vga="-device virtio-vga-gl" ;;
+  venus)
+    vga="-device virtio-vga-gl,hostmem=4G,blob=true,venus=true"
+    set -- "$@" -object memory-backend-memfd,id=mem1,size=4G -machine memory-backend=mem1 ;;
+  *) echo "unknown GPU: $gpu (virgl or venus)" >&2; exit 2 ;;
+esac
+if [ -n "$gpu" ]; then
+  # The GL display: a window, or an offscreen EGL context when headless.
+  if [ "$display" = "-display none" ]; then display="-display egl-headless"; else display="-display gtk,gl=on"; fi
+fi
+
 main="$VM/disk.qcow2"
 if [ "$target" = 1 ] || [ "$only_target" = 1 ]; then
   [ -f "$VM/target.qcow2" ] || qemu-img create -q -f qcow2 "$VM/target.qcow2" 64G
@@ -91,5 +108,5 @@ qemu-system-x86_64 "$@" -machine q35,smm=on -accel kvm -cpu host -smp 4 -m 4G \
   -drive if=none,id=disk,file="$main",format=qcow2 \
   -device virtio-blk-pci,drive=disk,bootindex=1 \
   -netdev user,id=net0 -device virtio-net-pci,netdev=net0 \
-  -device virtio-vga -device qemu-xhci -device usb-tablet \
+  $vga -device qemu-xhci -device usb-tablet \
   -serial "$serial" $debug $monitor $display $creds

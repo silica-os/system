@@ -1,0 +1,94 @@
+# A system extension (systemd-sysext) as a signed disk image: the files of
+# %{sysext-paths}, taken from the element staged at /payload, in an erofs /usr
+# with its dm-verity tree and the root hash signed with Silica's system key.
+# IPE runs code only from signed dm-verity images, so this is how anything
+# outside the sealed /usr gets to run. Output: %{sysext-name}.raw.
+
+build-depends:
+- silica/components/erofs-utils-selinux.bst
+- freedesktop-sdk.bst:components/cryptsetup.bst
+- freedesktop-sdk.bst:components/util-linux.bst
+- freedesktop-sdk.bst:components/openssl.bst
+- freedesktop-sdk.bst:vm/deploy-tools.bst
+- filename: silica/image/keys.bst
+  config:
+    location: /keys
+- filename: silica/components/refpolicy.bst
+  config:
+    location: /policy
+
+variables:
+  uuidnamespace: 5f1c1a6e-3b8f-4d61-9a3c-7d0c2f8e5b11
+
+config:
+  commands:
+  - |
+    set -eu
+    mkdir -p /sysroot/usr/lib/extension-release.d
+    for p in %{sysext-paths}; do
+      mkdir -p "/sysroot/$(dirname "$p")"
+      cp -a "/payload/$p" "/sysroot/$p"
+    done
+    cat >/sysroot/usr/lib/extension-release.d/extension-release.%{sysext-name} <<EOF
+    ID=silica
+    VERSION_ID=%{silica-version}
+    EOF
+
+  - |
+    set -eu
+    salt="$(printf %s '%{sysext-name}' | sha256sum | cut -d' ' -f1)"
+    mkfs.erofs -zlz4hc,12 -T "${SOURCE_DATE_EPOCH}" --all-time \
+      --file-contexts=/policy/usr/lib/selinux/silica/contexts/files/file_contexts \
+      --mount-point=/usr \
+      -U "$(uuidgen -s --namespace '%{uuidnamespace}' --name 'sysext-%{sysext-name}')" \
+      /ext.erofs /sysroot/usr
+    veritysetup format --salt="${salt}" /ext.erofs /ext.verity \
+      | sed -n 's/^Root hash:[[:space:]]*//p' >/roothash
+    test -s /roothash
+    printf %s "$(cat /roothash)" >/roothash.txt
+    openssl smime -sign -binary -noattr -nocerts -outform DER \
+      -signer /keys/system.crt -inkey /keys/system.key \
+      -in /roothash.txt -out /roothash.p7s
+    fp="$(openssl x509 -in /keys/system.crt -outform DER | sha256sum | cut -d' ' -f1)"
+    printf '{"rootHash":"%s","certificateFingerprint":"%s","signature":"%s"}' \
+      "$(cat /roothash)" "${fp}" "$(base64 -w0 /roothash.p7s)" >/ext.verity-sig
+    truncate -s 4096 /ext.verity-sig
+
+  - |
+    set -eu
+    hash="$(cat /roothash)"
+    # systemd pairs the partitions by these UUIDs, taken from the root hash.
+    data_uuid="$(echo "${hash}" | sed -E 's/^(.{8})(.{4})(.{4})(.{4})(.{12}).*/\1-\2-\3-\4-\5/')"
+    verity_uuid="$(echo "${hash}" | sed -E 's/.*(.{8})(.{4})(.{4})(.{4})(.{12})$/\1-\2-\3-\4-\5/')"
+    mkdir -p /genimage/tmp /genimage/root
+    cat >/genimage/genimage.cfg <<EOF
+    image %{sysext-name}.raw {
+        hdimage {
+            align = 4K
+            partition-table-type = "gpt"
+            disk-uuid = "$(uuidgen -s --namespace '%{uuidnamespace}' --name 'sysext-disk-%{sysext-name}')"
+        }
+        partition usr {
+            image = "/ext.erofs"
+            partition-type-uuid = "8484680c-9521-48c6-9c11-b0720656f69e"
+            partition-uuid = "${data_uuid}"
+        }
+        partition usr-verity {
+            image = "/ext.verity"
+            partition-type-uuid = "77ff5f63-e7b6-4633-acf4-1565b864c0e6"
+            partition-uuid = "${verity_uuid}"
+        }
+        partition usr-verity-sig {
+            image = "/ext.verity-sig"
+            partition-type-uuid = "e7bb33fb-06cf-4e81-8273-e543b413e2e2"
+            partition-uuid = "$(uuidgen -s --namespace '%{uuidnamespace}' --name 'sysext-sig-%{sysext-name}')"
+            size = 16K
+        }
+    }
+    config {
+        tmppath = "/genimage/tmp"
+        outputpath = "%{install-root}"
+    }
+    EOF
+    genimage --config /genimage/genimage.cfg --rootpath /genimage/root
+    ls -l '%{install-root}'

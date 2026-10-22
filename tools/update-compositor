@@ -1,0 +1,61 @@
+#!/usr/bin/env python3
+"""Points elements/silica/desktop/compositor.bst at a commit of silica-os/compositor.
+
+  tools/update-compositor [REF]
+
+REF (default: origin/main) is resolved in ~/silica/compositor (or $SILICA_COMPOSITOR).
+The cargo2 source gets one entry per crates.io package of that commit's Cargo.lock.
+"""
+import os
+import re
+import subprocess
+import sys
+import tomllib
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ELEMENT = os.path.join(ROOT, "elements/silica/desktop/compositor.bst")
+REPO = os.environ.get("SILICA_COMPOSITOR", os.path.expanduser("~/silica/compositor"))
+REGISTRY = "registry+https://github.com/rust-lang/crates.io-index"
+
+
+def git(*args):
+    return subprocess.run(["git", "-C", REPO, *args], check=True, capture_output=True, text=True).stdout
+
+
+def main():
+    ref = sys.argv[1] if len(sys.argv) > 1 else "origin/main"
+    commit = git("rev-parse", f"{ref}^{{commit}}").strip()
+    lock = tomllib.loads(git("show", f"{commit}:Cargo.lock"))
+    crates = []
+    for package in lock.get("package", []):
+        source = package.get("source")
+        if source is None:
+            continue
+        if source != REGISTRY:
+            sys.exit(f"{package['name']}: only crates.io sources are supported, not {source}")
+        crates.append(
+            "  - kind: registry\n"
+            f"    name: {package['name']}\n"
+            f"    version: {package['version']}\n"
+            f"    sha: {package['checksum']}\n"
+        )
+    with open(ELEMENT, encoding="utf-8") as f:
+        text = f.read()
+    head = text[: text.index("sources:\n")]
+    sources = (
+        "sources:\n"
+        "- kind: git_repo\n"
+        "  url: github:silica-os/compositor.git\n"
+        "  track: main\n"
+        f"  ref: {commit}\n"
+        "- kind: cargo2\n"
+        "  cargo-lock: Cargo.lock\n"
+        "  ref:\n" + "".join(crates)
+    )
+    with open(ELEMENT, "w", encoding="utf-8") as f:
+        f.write(head + sources)
+    print(f"compositor.bst: {commit[:12]}, {len(crates)} crates")
+
+
+if __name__ == "__main__":
+    main()

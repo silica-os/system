@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Boots a fresh Silica image in QEMU and checks the base system.
 
-  tools/test-vm [--update VERSION] [--install] [--keep]
+  tools/test-vm [--update VERSION] [--install] [--desktop] [--gpu virgl|venus] [--keep]
 
 The first boot gets its answers from credentials (locale, keymap, timezone
 and a homed user "tester"), so it needs no screen. The checks run as root in
@@ -11,6 +11,11 @@ the debug shell on ttyS1, which works only with Secure Boot off.
                   checks that VERSION booted and was blessed
                   (build it with tools/build-update VERSION).
 --install         installs onto a second disk, then boots that disk alone.
+--desktop         installs the compositor test extension (out/extensions, from
+                  tools/dev-sysext --build-only compositor-tests), starts
+                  tester's graphical session on tty2 and checks the compositor
+                  on DRM: ready, a client window, frames, the screen, a VT switch.
+--gpu             passes the GPU to tools/run-vm (otherwise llvmpipe).
 --keep            leaves out/vm and the logs in place after a failure.
 
 Logs go to /dev/shm/silica-test-*. Exits non-zero when a check fails.
@@ -30,6 +35,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LOGDIR = "/dev/shm"
 SERIAL = f"{LOGDIR}/silica-test-serial.sock"
 DEBUG = f"{LOGDIR}/silica-test-debug.sock"
+MONITOR = f"{LOGDIR}/silica-test-monitor.sock"
+SCREEN = f"{LOGDIR}/silica-test-screen.ppm"
 # Strong enough for pwquality, or homectl falls back to asking on the screen.
 PASSWORD = "Amalfi-Ravello-7319"
 
@@ -63,6 +70,10 @@ BASE_CHECKS = [
      " && echo \"$j\" | grep -q '\"memberOf\":\\[\"wheel\"\\]'"
      " && echo \"$j\" | grep -q '\"storage\":\"luks\"'"
      " && [ -e /Users/tester.home ]"),
+    ("a login starts the user's own systemd",
+     f"{{ PASSWORD='{PASSWORD}' homectl activate tester 2>/dev/null; homectl inspect tester | grep -q 'State: active'; }}"
+     " && systemd-run -q --wait --pipe -p PAMName=login -p User=tester"
+     " systemctl --user show -p Version --value >/dev/null"),
     ("network is online", "nm-online -q -t 60 && nmcli -t -f CONNECTIVITY general | grep -qx full"),
     ("IPE refuses unsigned code",
      "cp /usr/bin/true /var/tmp/ipe-test && ! /var/tmp/ipe-test 2>/dev/null"
@@ -177,12 +188,12 @@ class Console:
 class Vm:
     def __init__(self, args, log_name):
         self.log = open(f"{LOGDIR}/silica-test-{log_name}.log", "w")
-        for path in (SERIAL, DEBUG):
+        for path in (SERIAL, DEBUG, MONITOR):
             if os.path.exists(path):
                 os.unlink(path)
         self.proc = subprocess.Popen(
             [f"{ROOT}/tools/run-vm", "--headless", "--serial-socket", SERIAL,
-             "--debug-socket", DEBUG, *args],
+             "--debug-socket", DEBUG, "--monitor-socket", MONITOR, *args],
             stdout=self.log, stderr=subprocess.STDOUT, start_new_session=True)
         deadline = time.time() + 60
         while not os.path.exists(DEBUG):
@@ -192,6 +203,19 @@ class Vm:
         self.serial = Console(SERIAL, f"{LOGDIR}/silica-test-{log_name}-serial.log")
         threading.Thread(target=self.serial.drain, daemon=True).start()
         self.debug = Console(DEBUG, f"{LOGDIR}/silica-test-{log_name}-debug.log")
+
+    def screendump(self, path):
+        """Saves what the VM's display shows to PATH (PPM)."""
+        if os.path.exists(path):
+            os.unlink(path)
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as mon:
+            mon.connect(MONITOR)
+            mon.sendall(f"screendump {path}\n".encode())
+            deadline = time.time() + 20
+            while time.time() < deadline and not os.path.exists(path):
+                time.sleep(0.5)
+            time.sleep(1)
+        return os.path.exists(path)
 
     def stop(self):
         if self.proc.poll() is not None:
@@ -221,6 +245,9 @@ def tester_credential():
     record = {
         "userName": "tester", "realName": "Silica Tester", "shell": "/usr/bin/zsh",
         "memberOf": ["wheel"], "disposition": "regular",
+        # A fixed 8 GiB home: homed would otherwise grow it into most of the
+        # data partition and leave /var without room.
+        "diskSize": 8 << 30, "rebalanceWeight": False,
         "secret": {"password": [PASSWORD]},
         "privileged": {"hashedPassword": [hashed]},
     }
@@ -285,11 +312,108 @@ def test_update(report, vm, version):
     report.check(vm, "user data survived the update", "getent passwd tester >/dev/null && homectl inspect tester >/dev/null")
 
 
+USER = "systemd-run -q -M tester@.host --user"
+ACTIVE = "systemctl -q -M tester@.host --user is-active silica-compositor.service"
+SESSION_CHECKS = [
+    ("the compositor is ready on DRM through logind",
+     f"for i in $(seq 60); do {ACTIVE} && break; sleep 1; done; {ACTIVE}"
+     " && [ \"$(loginctl show-session \"$(loginctl show-user tester -p Display --value)\" -p Active --value)\" = yes ]"),
+    ("a test client maps a window",
+     f"{USER} --unit=silica-test-client /usr/libexec/silica/tests/silica-test-client --seconds 900"
+     " && sleep 3"
+     f" && {USER} --wait --pipe silica-cli window.list | grep -q dev.frascella.Silica.TestClient"),
+    ("the client gets frame callbacks",
+     "f() { journalctl -q _SYSTEMD_USER_UNIT=silica-test-client.service -o cat | sed -n 's/^frames //p' | tail -n 1; };"
+     " a=$(f); sleep 3; b=$(f); [ -n \"$a\" ] && [ \"$b\" -gt \"$a\" ]"),
+]
+VT_CHECKS = [
+    ("the session survives a VT switch",
+     "chvt 3 && sleep 2 && chvt 2 && sleep 3"
+     " && f() { journalctl -q _SYSTEMD_USER_UNIT=silica-test-client.service -o cat | sed -n 's/^frames //p' | tail -n 1; };"
+     f" {ACTIVE}"
+     " && a=$(f) && sleep 3 && b=$(f) && [ \"$b\" -gt \"$a\" ]"),
+]
+
+
+def client_pixels(path):
+    """Counts the pixels of the test client's color (d03030) in a PPM screendump."""
+    with open(path, "rb") as f:
+        data = f.read()
+    m = re.match(rb"P6\s+(\d+)\s+(\d+)\s+(\d+)\s", data)
+    if not m:
+        return 0, 0
+    pixels = data[m.end():]
+    total = len(pixels) // 3
+    red = sum(1 for i in range(0, len(pixels) - 2, 3)
+              if abs(pixels[i] - 0xd0) < 24 and pixels[i + 1] < 0x58 and pixels[i + 2] < 0x58)
+    lit = sum(1 for i in range(0, len(pixels) - 2, 3) if pixels[i] | pixels[i + 1] | pixels[i + 2])
+    return red, lit / max(total, 1)
+
+
+def show(vm, what, command):
+    """Prints a command's output, for the diagnosis of a failed check."""
+    out = vm.debug.output(command)
+    print(f"      --- {what}", flush=True)
+    for line in out.splitlines():
+        print(f"      {line}", flush=True)
+
+
+def test_desktop(report, vm, sysext):
+    ext = f"{ROOT}/out/extensions"
+    raw = f"silica-{sysext}.raw"
+    report.must(os.path.exists(f"{ext}/{raw}"), f"{ext}/{raw} exists")
+    server = subprocess.Popen([sys.executable, "-m", "http.server", "8080"], cwd=ext,
+                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        report.check(vm, "the signed test extension merges and its code runs",
+                     "mkdir -p /var/lib/extensions"
+                     " && curl -fsS --retry 20 --retry-delay 1 --retry-connrefused"
+                     f" -o /var/lib/extensions/{raw} http://10.0.2.2:8080/{raw}"
+                     f" && systemd-sysext refresh >/dev/null && systemd-sysext status | grep -q silica-{sysext}"
+                     " && { /usr/libexec/silica/tests/silica-test-client --bogus 2>/dev/null; [ $? = 2 ]; }")
+    finally:
+        server.terminate()
+        server.wait()
+    ok = report.check(vm, "tester's session starts on tty2",
+                 f"{{ PASSWORD='{PASSWORD}' homectl activate tester 2>/dev/null; homectl inspect tester | grep -q 'State: active'; }}"
+                 " && mkdir -p /run/systemd/user/silica-compositor.service.d"
+                 " && printf '[Service]\\nExecStart=\\nExecStart=/usr/bin/silica-compositor"
+                 " --control %%t/silica/control.sock\\n' >/run/systemd/user/silica-compositor.service.d/test.conf"
+                 # No getty on tty2: the session needs that VT for itself.
+                 " && systemctl mask -q --runtime getty@tty2.service autovt@tty2.service && systemctl stop getty@tty2.service autovt@tty2.service"
+                 " && chvt 2"
+                 " && systemd-run -q --unit=silica-test-session -p PAMName=login -p User=tester"
+                 " -p TTYPath=/dev/tty2 -p StandardInput=tty -p StandardOutput=journal"
+                 " -E XDG_SESSION_TYPE=wayland -E XDG_SESSION_CLASS=user /usr/bin/silica-session"
+                 " && sleep 2 && systemctl is-active -q silica-test-session.service")
+    for name, command in SESSION_CHECKS:
+        ok = report.check(vm, name, command, timeout=180) and ok
+    if not ok:
+        show(vm, "session journal", "journalctl -b --no-pager -o short-monotonic"
+             " _UID=$(id -u tester) + _SYSTEMD_UNIT=silica-test-session.service"
+             " | grep -vE ' (AVC|SYSCALL|PROCTITLE|CWD|PATH|EXECVE) ' | tail -n 40 | cut -c1-200")
+    shot = vm.screendump(SCREEN)
+    red, lit = client_pixels(SCREEN) if shot else (0, 0)
+    report.must(shot, "screendump of the display")
+    ok = red > 480 * 320 // 2 and lit > 0.5
+    print(f"{'PASS' if ok else 'FAIL'}  the display shows the client's window ({red} red pixels, {lit:.0%} lit)", flush=True)
+    if not ok:
+        report.failed += 1
+    for name, command in VT_CHECKS:
+        report.check(vm, name, command, timeout=180)
+    report.check(vm, "the compositor logged no errors",
+                 "! journalctl -q _SYSTEMD_USER_UNIT=silica-compositor.service -p err -o cat | grep .")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--update", metavar="VERSION")
     parser.add_argument("--install", action="store_true")
+    parser.add_argument("--desktop", action="store_true")
+    parser.add_argument("--gpu", choices=["virgl", "venus"])
     parser.add_argument("--keep", action="store_true")
+    parser.add_argument("--sysext", default="compositor-tests",
+                        help="the extension --desktop installs (compositor-dev: a dev build)")
     args = parser.parse_args()
 
     creds = []
@@ -298,9 +422,12 @@ def main():
     creds += ["--credential-binary", tester_credential()]
 
     report = Report()
-    vm = Vm(["--fresh", *(["--target-disk"] if args.install else []), *creds], "boot")
+    gpu = ["--gpu", args.gpu] if args.gpu else []
+    vm = Vm(["--fresh", *gpu, *(["--target-disk"] if args.install else []), *creds], "boot")
     try:
         boot_and_check(report, vm, BASE_CHECKS)
+        if args.desktop:
+            test_desktop(report, vm, args.sysext)
         if args.update:
             test_update(report, vm, args.update)
         if args.install:

@@ -91,3 +91,5 @@ depends:
 # Silica.
 - silica/system/config.bst
 - silica/system/tools.bst
+# The desktop.
+- silica/desktop/compositor-system.bst
