@@ -35,8 +35,10 @@ build-depends:
 variables:
   # Kernel command line shared by both profiles. /usr comes from the
   # dm-verity image whose root hash is pinned here; the data partition is
-  # found and unlocked by systemd-gpt-auto.
-  cmdline-base: 'rw mount.usrflags=ro console=tty0 console=ttyS0'
+  # found and unlocked by systemd-gpt-auto. The last console= is
+  # /dev/console, where first-boot questions and Recovery appear: the
+  # screen. The serial port still gets kernel messages and a login.
+  cmdline-base: 'rw mount.usrflags=ro console=ttyS0 console=tty0'
 
 config:
   commands:
