@@ -273,6 +273,9 @@ Built and verified in QEMU (OVMF, swtpm, KVM):
     hash signature is checked by the kernel.
 - **First boot:**
   - systemd-repart adds the B slot and the data partition: btrfs in LUKS2, enrolled in the TPM2.
+  - The TPM2 key is bound to a signed PCR 11 policy: both UKI profiles carry a `.pcrsig` by
+    Silica's PCR key, so only Silica's UKIs unlock the data, and a signed update keeps working
+    without re-enrolling.
   - `/etc` is filled from the factory defaults.
   - firstboot asks for locale, keymap and timezone (no root password).
   - homed's wizard creates the first user: zsh, `wheel`, a LUKS2 home under `/Users`.
@@ -281,7 +284,9 @@ Built and verified in QEMU (OVMF, swtpm, KVM):
 - **Network:** NetworkManager reaches full connectivity, with systemd-resolved as DNS.
 - **No failed units** on a normal boot.
 - **Updates:**
-  1. `silica-update.service` downloads 0.1.1 into the B slot and the ESP.
+  1. `silica-update.service` downloads 0.1.1 into the B slot and the ESP. The manifest
+     (`SHA256SUMS`) must carry a valid signature (`SHA256SUMS.gpg`) by the key in
+     `/usr/lib/systemd/import-pubring.pgp`.
   2. `BootNext` points at 0.1.1, and the reboot comes up on 0.1.1 with data and homes intact. The
      TPM unlock survives the update.
   3. 0.1.1 is blessed to the front of BootOrder.
@@ -297,6 +302,9 @@ Built and verified in QEMU (OVMF, swtpm, KVM):
   - Everything on the sealed image runs.
   - Scripts still run through their interpreter (`zsh script.sh`).
 
+`tools/test-vm --update VERSION --install` repeats these checks on a fresh image, except
+Recovery and the screen prompts (the first boot gets its answers from credentials).
+
 Found while testing:
 
 - **systemd-repart (v261):**
@@ -310,10 +318,6 @@ Found while testing:
 - **kCFI:** it needs a Clang-built kernel; the kernel is built with GCC for now.
 - **SELinux:** freedesktop-sdk's systemd is built without SELinux (`-SELINUX`). The Silica policy
   needs a systemd element of our own first. The LSM is built into the kernel.
-- **Signed update manifests:** sysupdate has `Verify=false` until the update server signs
-  `SHA256SUMS`. The usr image is still checked by the kernel through its verity signature.
-- **Signed TPM policy:** the TPM2 unlock is bound to PCR 7 (Secure Boot state). A signed PCR 11
-  policy (`ukify --pcr-private-key`) would also bind it to Silica's UKIs.
 - **Missing components:**
   - ipp-usb and speech-dispatcher have no recipe yet.
   - zsh is the shell of homed's first-boot user and of `useradd`; `homectl create` needs

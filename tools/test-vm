@@ -1,0 +1,319 @@
+#!/usr/bin/env python3
+"""Boots a fresh Silica image in QEMU and checks the base system.
+
+  tools/test-vm [--update VERSION] [--install] [--keep]
+
+The first boot gets its answers from credentials (locale, keymap, timezone
+and a homed user "tester"), so it needs no screen. The checks run as root in
+the debug shell on ttyS1, which works only with Secure Boot off.
+
+--update VERSION  serves out/update-VERSION on port 8080, updates, reboots and
+                  checks that VERSION booted and was blessed
+                  (build it with tools/build-update VERSION).
+--install         installs onto a second disk, then boots that disk alone.
+--keep            leaves out/vm and the logs in place after a failure.
+
+Logs go to /dev/shm/silica-test-*. Exits non-zero when a check fails.
+"""
+import argparse
+import base64
+import json
+import os
+import re
+import socket
+import subprocess
+import sys
+import threading
+import time
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+LOGDIR = "/dev/shm"
+SERIAL = f"{LOGDIR}/silica-test-serial.sock"
+DEBUG = f"{LOGDIR}/silica-test-debug.sock"
+# Strong enough for pwquality, or homectl falls back to asking on the screen.
+PASSWORD = "Amalfi-Ravello-7319"
+
+# Name, shell command. A check passes when the command exits 0.
+BASE_CHECKS = [
+    ("boot reaches running, no failed units",
+     "[ \"$(timeout 900 systemctl is-system-running --wait)\" = running ]"
+     " || { systemctl --failed --no-legend; false; }"),
+    ("/usr is the signed verity image",
+     "findmnt -no SOURCE /usr | grep -q mapper/usr"
+     " && veritysetup status usr | grep -q 'status:.*verified'"
+     " && findmnt -no FSTYPE /usr | grep -qx erofs"),
+    ("kernel lockdown is integrity", "grep -q '\\[integrity\\]' /sys/kernel/security/lockdown"),
+    ("module signatures are enforced", "grep -qx Y /sys/module/module/parameters/sig_enforce"),
+    ("first boot added the B slot and the data partition",
+     "ls /boot >/dev/null; d=$(lsblk -no PKNAME \"$(findmnt -no SOURCE -t vfat /boot)\")"
+     " && [ \"$(lsblk -nro TYPE /dev/$d | grep -c part)\" -ge 8 ]"),
+    ("data is btrfs in LUKS2, enrolled in the TPM2",
+     "findmnt -no FSTYPE / | grep -qx btrfs"
+     " && cryptsetup status root | grep -q 'type:.*LUKS2'"
+     " && cryptsetup luksDump \"$(cryptsetup status root | sed -n 's/^ *device: *//p')\""
+     " | grep -q systemd-tpm2"),
+    ("TPM2 unlock is bound to the signed PCR 11 policy",
+     "cryptsetup token export --token-id 0"
+     " \"$(cryptsetup status root | sed -n 's/^ *device: *//p')\""
+     " | grep -q '\"tpm2_pubkey_pcrs\":\\[11\\]'"),
+    ("layout directories exist", "for d in /System /Applications /Library /Users; do [ -d $d ] || exit 1; done"),
+    ("homed user with zsh, wheel and a LUKS home",
+     "j=$(homectl inspect --json=short tester)"
+     " && echo \"$j\" | grep -q '\"shell\":\"/usr/bin/zsh\"'"
+     " && echo \"$j\" | grep -q '\"memberOf\":\\[\"wheel\"\\]'"
+     " && echo \"$j\" | grep -q '\"storage\":\"luks\"'"
+     " && [ -e /Users/tester.home ]"),
+    ("network is online", "nm-online -q -t 60 && nmcli -t -f CONNECTIVITY general | grep -qx full"),
+    ("IPE refuses unsigned code",
+     "cp /usr/bin/true /var/tmp/ipe-test && ! /var/tmp/ipe-test 2>/dev/null"
+     " && printf '#!/bin/sh\\n' > /var/tmp/ipe-test.sh && chmod +x /var/tmp/ipe-test.sh"
+     " && ! /var/tmp/ipe-test.sh 2>/dev/null; rc=$?; rm -f /var/tmp/ipe-test /var/tmp/ipe-test.sh; exit $rc"),
+    ("UEFI entries for Silica and Recovery",
+     "/usr/libexec/silica/silica-boot status | grep -q 'Silica Recovery'"
+     " && /usr/libexec/silica/silica-boot status | grep -q \"Silica $(. /usr/lib/os-release; echo $IMAGE_VERSION)\""),
+]
+
+
+class Console:
+    """A serial console of the VM, reached through QEMU's socket."""
+
+    def __init__(self, path, log_path):
+        self.log = open(log_path, "a", encoding="utf-8", errors="replace")
+        deadline = time.time() + 30
+        while True:
+            try:
+                self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                self.sock.connect(path)
+                break
+            except OSError:
+                if time.time() > deadline:
+                    raise
+                time.sleep(0.5)
+        self.sock.settimeout(0.5)
+        self.buf = ""
+
+    def pump(self):
+        try:
+            data = self.sock.recv(65536)
+        except socket.timeout:
+            return
+        if not data:
+            raise EOFError("console closed")
+        text = data.decode("utf-8", errors="replace")
+        self.log.write(text)
+        self.log.flush()
+        self.buf += re.sub(r"\x1b\[[0-9;?]*[a-zA-Z]", "", text)
+
+    def send(self, line):
+        # Before the guest drives the UART, QEMU stops reading the socket:
+        # drop the line rather than block.
+        try:
+            self.sock.sendall((line + "\r").encode())
+        except socket.timeout:
+            pass
+
+    def drain(self):
+        """Keeps reading into the log, so the guest never blocks on output."""
+        while True:
+            try:
+                self.pump()
+                self.buf = self.buf[-4096:]
+            except (EOFError, OSError):
+                return
+
+    def expect(self, pattern, timeout):
+        regex = re.compile(pattern)
+        end = time.time() + timeout
+        while True:
+            m = regex.search(self.buf)
+            if m:
+                self.buf = self.buf[m.end():]
+                return m
+            if time.time() > end:
+                return None
+            self.pump()
+
+    def wait_shell(self, timeout):
+        """Pokes the debug shell until it answers."""
+        end = time.time() + timeout
+        while time.time() < end:
+            self.send("echo SHELL-$((40+2))")
+            if self.expect(r"SHELL-42", 5):
+                self.send("stty -echo 2>/dev/null; export SYSTEMD_PAGER= SYSTEMD_COLORS=0")
+                return True
+        return False
+
+    def run(self, command, timeout=120):
+        """Runs COMMAND in a subshell; returns its exit code (None on timeout)
+        and the tail of its output."""
+        tag = f"T{time.time_ns()}"
+        self.send(f"( {command} ) >/dev/shm/{tag}.out 2>&1; echo {tag}-RC=$?")
+        m = self.expect(rf"{tag}-RC=(\d+)", timeout)
+        rc = int(m.group(1)) if m else None
+        return rc, ("" if rc == 0 else self.output(f"tail -n 15 /dev/shm/{tag}.out"))
+
+    def output(self, command, timeout=60):
+        tag = f"O{time.time_ns()}"
+        self.send(f"echo {tag}-BEGIN; {command}; echo {tag}-END")
+        m = self.expect(rf"(?s){tag}-BEGIN\r?\n(.*?){tag}-END", timeout)
+        return m.group(1).strip() if m else ""
+
+
+class Vm:
+    def __init__(self, args, log_name):
+        self.log = open(f"{LOGDIR}/silica-test-{log_name}.log", "w")
+        for path in (SERIAL, DEBUG):
+            if os.path.exists(path):
+                os.unlink(path)
+        self.proc = subprocess.Popen(
+            [f"{ROOT}/tools/run-vm", "--headless", "--serial-socket", SERIAL,
+             "--debug-socket", DEBUG, *args],
+            stdout=self.log, stderr=subprocess.STDOUT, start_new_session=True)
+        deadline = time.time() + 60
+        while not os.path.exists(DEBUG):
+            if self.proc.poll() is not None or time.time() > deadline:
+                raise RuntimeError(f"run-vm did not start, see {self.log.name}")
+            time.sleep(0.5)
+        self.serial = Console(SERIAL, f"{LOGDIR}/silica-test-{log_name}-serial.log")
+        threading.Thread(target=self.serial.drain, daemon=True).start()
+        self.debug = Console(DEBUG, f"{LOGDIR}/silica-test-{log_name}-debug.log")
+
+    def stop(self):
+        if self.proc.poll() is not None:
+            return
+        # Stop only the qemu that run-vm started; run-vm then stops swtpm.
+        children = f"/proc/{self.proc.pid}/task/{self.proc.pid}/children"
+        try:
+            pids = [int(p) for p in open(children).read().split()]
+        except OSError:
+            pids = []
+        for pid in pids:
+            try:
+                if open(f"/proc/{pid}/comm").read().strip().startswith("qemu-system"):
+                    os.kill(pid, 15)
+            except OSError:
+                pass
+        try:
+            self.proc.wait(60)
+        except subprocess.TimeoutExpired:
+            self.proc.terminate()
+            self.proc.wait()
+
+
+def tester_credential():
+    hashed = subprocess.run(["openssl", "passwd", "-6", PASSWORD], check=True,
+                            capture_output=True, text=True).stdout.strip()
+    record = {
+        "userName": "tester", "realName": "Silica Tester", "shell": "/usr/bin/zsh",
+        "memberOf": ["wheel"], "disposition": "regular",
+        "secret": {"password": [PASSWORD]},
+        "privileged": {"hashedPassword": [hashed]},
+    }
+    return "home.create.tester=" + base64.b64encode(json.dumps(record).encode()).decode()
+
+
+class Report:
+    def __init__(self):
+        self.failed = 0
+
+    def check(self, vm, name, command, timeout=120):
+        rc, out = vm.debug.run(command, timeout)
+        ok = rc == 0
+        detail = "" if ok else f" (exit {rc if rc is not None else 'timeout'})"
+        print(f"{'PASS' if ok else 'FAIL'}  {name}{detail}", flush=True)
+        for line in out.splitlines():
+            print(f"      {line}", flush=True)
+        if not ok:
+            self.failed += 1
+        return ok
+
+    def must(self, ok, what):
+        print(f"{'PASS' if ok else 'FAIL'}  {what}", flush=True)
+        if not ok:
+            raise RuntimeError(what)
+
+
+def boot_and_check(report, vm, checks):
+    report.must(vm.debug.wait_shell(600), "debug shell answers")
+    for name, command in checks:
+        report.check(vm, name, command, timeout=960 if "is-system-running" in command else 180)
+
+
+def wait_reboot(report, vm):
+    vm.debug.send("systemctl reboot")
+    time.sleep(10)
+    vm.debug.buf = ""
+    report.must(vm.debug.wait_shell(600), "debug shell answers after reboot")
+
+
+def test_update(report, vm, version):
+    payload = f"{ROOT}/out/update-{version}"
+    report.must(os.path.isdir(payload), f"{payload} exists")
+    server = subprocess.Popen([sys.executable, "-m", "http.server", "8080"], cwd=payload,
+                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        report.check(vm, f"update to {version} is downloaded and staged",
+                     "systemctl start silica-update.service"
+                     " && /usr/libexec/silica/silica-boot status | grep -q "
+                     f"'BootNext:.*Silica {version}'", timeout=900)
+    finally:
+        server.terminate()
+        server.wait()
+    wait_reboot(report, vm)
+    report.check(vm, f"{version} booted", f"[ \"$(. /usr/lib/os-release; echo $IMAGE_VERSION)\" = {version} ]")
+    report.check(vm, f"{version} is blessed",
+                 "timeout 900 systemctl is-system-running --wait >/dev/null;"
+                 " s=$(/usr/libexec/silica/silica-boot status);"
+                 " first=$(echo \"$s\" | sed -n 's/^BootOrder: *\\([0-9A-F]*\\).*/\\1/p');"
+                 f" echo \"$s\" | grep -q \"^Boot$first.*Silica {version}\"",
+                 timeout=960)
+    report.check(vm, "user data survived the update", "getent passwd tester >/dev/null && homectl inspect tester >/dev/null")
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--update", metavar="VERSION")
+    parser.add_argument("--install", action="store_true")
+    parser.add_argument("--keep", action="store_true")
+    args = parser.parse_args()
+
+    creds = []
+    for c in ("firstboot.locale=en_US.UTF-8", "firstboot.keymap=us", "firstboot.timezone=UTC"):
+        creds += ["--credential", c]
+    creds += ["--credential-binary", tester_credential()]
+
+    report = Report()
+    vm = Vm(["--fresh", *(["--target-disk"] if args.install else []), *creds], "boot")
+    try:
+        boot_and_check(report, vm, BASE_CHECKS)
+        if args.update:
+            test_update(report, vm, args.update)
+        if args.install:
+            report.check(vm, "installer writes the second disk",
+                         "/usr/libexec/silica/silica-install --yes --disk /dev/$(basename $(readlink -f /dev/disk/by-id/virtio-silica-target))", timeout=1800)
+            vm.debug.send("systemctl poweroff")
+            vm.proc.wait(300)
+    except (RuntimeError, EOFError, OSError) as e:
+        print(f"stopped: {e}", flush=True)
+        report.failed += 1
+    finally:
+        vm.stop()
+
+    if args.install and report.failed == 0:
+        vm = Vm(["--boot-target", *creds], "installed")
+        try:
+            boot_and_check(report, vm, BASE_CHECKS)
+        except (RuntimeError, EOFError, OSError) as e:
+            print(f"stopped: {e}", flush=True)
+            report.failed += 1
+        finally:
+            vm.stop()
+
+    print(f"{report.failed} check(s) failed" if report.failed else "all checks passed")
+    if report.failed == 0 and not args.keep:
+        subprocess.run(["rm", "-rf", f"{ROOT}/out/vm"], check=False)
+    return 1 if report.failed else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -53,6 +53,8 @@ host.
   - It works only with Secure Boot off, because systemd-stub accepts the extra kernel argument only
     then.
 - `tools/vm-console SOCKET LOG 'expect:login:' 'send:...'` drives either console from scripts.
+- `tools/test-vm [--update VERSION] [--install]` boots a fresh image and checks the base system
+  (verity, encryption and TPM policy, user, network, IPE, A/B update, installer).
 
 ## Layout of the repository
 

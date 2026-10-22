@@ -1,0 +1,29 @@
+name: checks
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: src
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup component add rustfmt clippy
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo test
+
+  elements:
+    # Loads the whole element graph (junction, plugins, variables) without
+    # building it. A full image build needs our own artifact cache: see #1.
+    runs-on: ubuntu-latest
+    container:
+      image: registry.gitlab.com/freedesktop-sdk/infrastructure/freedesktop-sdk-docker-images/bst2:0a258dcf304505c338629e6a477b3d4b6ae3f01f
+    steps:
+      - uses: actions/checkout@v4
+      - run: tools/gen-dev-keys
+      - run: bst show --deps all --format '%{name}' silica/image/disk.bst > /dev/null
