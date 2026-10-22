@@ -26,8 +26,10 @@ later and sit on top of this. Source: silica-os#6, revised with the user's decis
   and shows no menu, so it is not a bootloader. It measures the UKI into the TPM (PCR 11) and gives
   the kernel its initrd.
 - The firmware boots it directly from UEFI boot entries written at install:
-  - `Silica (A)` and `Silica (B)`, one per system slot;
-  - `Silica Recovery` (§1.4).
+  - `Silica <version>`, one per installed UKI (at most two, the A/B slots);
+  - `Silica Recovery`: the running UKI with load options `@1`, which selects the UKI's recovery
+    profile (§1.4).
+  - Details in `docs/boot.md`.
   - A copy of the current UKI also goes to `\EFI\BOOT\BOOTX64.EFI`, for firmware that loses its
     NVRAM entries.
 - No GRUB, no systemd-boot, no menu. Choosing a slot by hand is a firmware boot-menu job, like
