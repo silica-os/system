@@ -84,9 +84,10 @@ config:
         outputpath = "%{install-root}"
     }
     EOF2
-    mkdir -p /esp
-    cp -a %{build-root}/esp/. /esp/
-    genimage --config %{build-root}/genimage.cfg --rootpath /
+    # genimage copies its whole root path; give it only the ESP tree.
+    mkdir -p %{build-root}/root
+    mv %{build-root}/esp %{build-root}/root/esp
+    genimage --config %{build-root}/genimage.cfg --rootpath %{build-root}/root
 
   - |
     set -eu
