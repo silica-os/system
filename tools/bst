@@ -1,0 +1,11 @@
+#!/bin/sh
+# Runs BuildStream in the freedesktop-sdk bst2 container, on this project.
+set -e
+IMG=registry.gitlab.com/freedesktop-sdk/infrastructure/freedesktop-sdk-docker-images/bst2:0a258dcf304505c338629e6a477b3d4b6ae3f01f
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+CACHE="${SILICA_BST_CACHE:-$HOME/build/bst-cache}"
+mkdir -p "$CACHE"
+exec docker run --rm --privileged --network host \
+  -u "$(id -u):$(id -g)" -e HOME=/tmp/home -e XDG_CACHE_HOME=/cache \
+  -v "$CACHE:/cache" -v "$ROOT:/src" -w /src \
+  "$IMG" sh -c 'mkdir -p /tmp/home && exec bst "$@"' bst "$@"

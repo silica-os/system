@@ -1,0 +1,18 @@
+#!/bin/sh
+# Generates the development signing keys in keys/ (never committed).
+# Production keys live on hardware tokens and are never generated here.
+set -eu
+dir="$(cd "$(dirname "$0")/.." && pwd)/keys"
+mkdir -p "$dir"
+cd "$dir"
+gen() {
+  [ -e "$1.key" ] && return 0
+  openssl req -new -x509 -newkey rsa:4096 -sha256 -days 3650 -nodes \
+    -subj "/CN=$2/" -keyout "$1.key" -out "$1.crt"
+}
+gen secureboot-db "Silica Development Secure Boot DB"
+gen secureboot-kek "Silica Development Secure Boot KEK"
+gen secureboot-pk "Silica Development Secure Boot PK"
+gen system "Silica Development System Signing"
+# The kernel takes one PEM holding the module signing key and its certificate.
+cat system.key system.crt > system.pem
