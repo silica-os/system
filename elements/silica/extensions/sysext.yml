@@ -26,8 +26,13 @@ config:
     set -eu
     mkdir -p /sysroot/usr/lib/extension-release.d
     for p in %{sysext-paths}; do
-      mkdir -p "/sysroot/$(dirname "$p")"
-      cp -a "/payload/$p" "/sysroot/$p"
+      if [ -d "/payload/$p" ]; then
+        mkdir -p "/sysroot/$p"
+        cp -a "/payload/$p/." "/sysroot/$p/"
+      else
+        mkdir -p "/sysroot/$(dirname "$p")"
+        cp -a "/payload/$p" "/sysroot/$p"
+      fi
     done
     cat >/sysroot/usr/lib/extension-release.d/extension-release.%{sysext-name} <<EOF
     ID=silica

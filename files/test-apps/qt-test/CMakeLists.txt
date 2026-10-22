@@ -1,0 +1,6 @@
+cmake_minimum_required(VERSION 3.16)
+project(silica-qt-test LANGUAGES CXX)
+find_package(Qt6 REQUIRED COMPONENTS Widgets)
+add_executable(silica-qt-test main.cpp)
+target_link_libraries(silica-qt-test PRIVATE Qt6::Widgets)
+install(TARGETS silica-qt-test DESTINATION libexec/silica/tests)
