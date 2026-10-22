@@ -3,10 +3,11 @@
 #
 #   tools/run-vm [--fresh] [--secure-boot] [--serial FILE | --serial-socket PATH]
 #                [--headless] [--debug-socket PATH] [--target-disk | --boot-target]
-#                [--monitor-socket PATH] [--gpu virgl|venus]
+#                [--monitor-socket PATH] [--gpu virgl|venus] [--outputs N]
 #
 # --gpu gives the VM a virtio-gpu with host OpenGL (virgl) or Vulkan (venus);
-# without it Mesa renders in software (llvmpipe).
+# without it Mesa renders in software (softpipe: IPE refuses llvmpipe's JIT).
+# --outputs gives the virtio-gpu N display outputs (default 1).
 # --monitor-socket exposes the QEMU monitor (e.g. 'screendump FILE').
 # --target-disk attaches an empty 64G disk (out/vm/target.qcow2) for
 # silica-install; --boot-target then boots from that disk alone.
@@ -28,7 +29,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="$ROOT/out"
 VM="$OUT/vm"
 IMG=registry.gitlab.com/freedesktop-sdk/infrastructure/freedesktop-sdk-docker-images/bst2:0a258dcf304505c338629e6a477b3d4b6ae3f01f
-gpu="" fresh=0 secure=0 serial=stdio display="-display gtk" uki="" append="" creds="" debug="" target=0 only_target=0 monitor=""
+gpu="" outputs=1 fresh=0 secure=0 serial=stdio display="-display gtk" uki="" append="" creds="" debug="" target=0 only_target=0 monitor=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --fresh) fresh=1 ;;
@@ -40,6 +41,7 @@ while [ $# -gt 0 ]; do
     --target-disk) target=1 ;;
     --boot-target) only_target=1 ;;
     --gpu) gpu="$2"; shift ;;
+    --outputs) outputs="$2"; shift ;;
     --monitor-socket) monitor="-monitor unix:$2,server=on,wait=off"; shift ;;
     --uki) uki="$2"; shift ;;
     --append) append="$2"; shift ;;
@@ -82,6 +84,7 @@ case "$gpu" in
     set -- "$@" -object memory-backend-memfd,id=mem1,size=4G -machine memory-backend=mem1 ;;
   *) echo "unknown GPU: $gpu (virgl or venus)" >&2; exit 2 ;;
 esac
+vga="$vga,max_outputs=$outputs"
 if [ -n "$gpu" ]; then
   # The GL display: a window, or an offscreen EGL context when headless.
   if [ "$display" = "-display none" ]; then display="-display egl-headless"; else display="-display gtk,gl=on"; fi
