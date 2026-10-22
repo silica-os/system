@@ -13,7 +13,8 @@ variables:
   # Slot sizes; repart.d, the installer and the disk image must agree.
   usr-size: '6G'
   verity-size: '128M'
-  sig-size: '1M'
+  # systemd-repart fixes verity signature partitions at 16 KiB.
+  sig-size: '16K'
 
 config:
   install-commands:
