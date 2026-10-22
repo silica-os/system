@@ -82,7 +82,7 @@ fn read_trim(path: &Path) -> Option<String> {
     fs::read_to_string(path).ok().map(|s| s.trim().to_string())
 }
 
-/// Disks that hold the running system, found through the mounts of `/efi`,
+/// Disks that hold the running system, found through the mounts of the ESP,
 /// `/usr` and `/` and through device-mapper/RAID slaves.
 pub fn running_disks(roots: &Roots) -> BTreeSet<String> {
     let mut out = BTreeSet::new();
@@ -90,7 +90,7 @@ pub fn running_disks(roots: &Roots) -> BTreeSet<String> {
         return out;
     };
     let mounts = esp::parse_mountinfo(&text);
-    for want in ["/efi", "/usr", "/"] {
+    for want in ["/boot", "/efi", "/usr", "/"] {
         if let Some((_, maj, min)) = mounts.iter().rev().find(|(mp, _, _)| mp == want) {
             collect_disks(roots, *maj, *min, 0, &mut out);
         }

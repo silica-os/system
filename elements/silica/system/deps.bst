@@ -21,7 +21,6 @@ depends:
 - freedesktop-sdk.bst:components/bash-config.bst
 - freedesktop-sdk.bst:components/bash-completion.bst
 - freedesktop-sdk.bst:components/hosts.bst
-- freedesktop-sdk.bst:components/nsswitch-config.bst
 - freedesktop-sdk.bst:components/tzdata.bst
 - freedesktop-sdk.bst:components/locales.bst
 - freedesktop-sdk.bst:components/keyutils.bst

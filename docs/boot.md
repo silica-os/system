@@ -6,7 +6,7 @@ describes what the tools in `src/` do.
 ## Boot entries
 
 Silica has no bootloader. The firmware starts a signed UKI from the ESP through its own UEFI
-`Boot####` entries. The ESP is mounted at `/efi` on the running system.
+`Boot####` entries. The ESP is mounted at `/boot` on the running system (systemd-gpt-auto picks `/boot` when it is free; the tools fall back to `/efi`).
 
 ### Files on the ESP
 

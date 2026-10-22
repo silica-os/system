@@ -30,7 +30,7 @@ commands:
                          and set BootNext when a newer version is installed
 
 options:
-  --esp DIR              ESP mount point (default /efi)
+  --esp DIR              ESP mount point (default /boot, else /efi)
   --esp-device DEV       ESP device node instead of looking up --esp
   --efivars DIR          UEFI variable directory (default /sys/firmware/efi/efivars)
   --sysfs DIR            sysfs directory (default /sys)
@@ -170,8 +170,19 @@ fn status(mgr: &BootManager, out: &mut dyn Write) -> Result<()> {
     write_out(out, &text)
 }
 
+/// systemd-gpt-auto mounts the ESP at /boot when /boot is free, else /efi.
+fn default_esp(roots: &Roots) -> &'static str {
+    ["/boot", "/efi"]
+        .into_iter()
+        .find(|m| roots.path(m).join("EFI").is_dir())
+        .unwrap_or("/boot")
+}
+
 fn resolve_esp(roots: &Roots, parsed: &Parsed) -> Result<(EspInfo, PathBuf)> {
-    let mount = parsed.value("esp").unwrap_or("/efi");
+    let mount = match parsed.value("esp") {
+        Some(m) => m,
+        None => default_esp(roots),
+    };
     let dir = roots.path(mount);
     let info = match parsed.value("esp-device") {
         Some(dev) => esp::from_device_name(roots, dev)?,
@@ -400,7 +411,7 @@ mod tests {
         assert!(run_err(&roots, &["sync", "--esp", "/nowhere"]).contains("cannot identify the ESP"));
         // an unmounted/empty ESP directory is refused
         let _ = fs::remove_dir_all(roots.root.join("efi/EFI"));
-        assert!(run_err(&roots, &["sync"]).contains("is the ESP mounted"));
+        assert!(run_err(&roots, &["sync", "--esp", "/efi"]).contains("is the ESP mounted"));
         let _ = fs::remove_dir_all(&roots.root);
     }
 
