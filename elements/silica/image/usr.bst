@@ -20,6 +20,9 @@ build-depends:
 - filename: silica/components/systemd-selinux.bst
   config:
     location: /systemd-selinux
+- filename: silica/components/pam-selinux.bst
+  config:
+    location: /pam-selinux
 
 environment:
   LD_PRELOAD: /usr/libexec/fakecap/fakecap.so
@@ -36,6 +39,7 @@ config:
   - |
     # systemd with SELinux, over freedesktop-sdk's build of the same version.
     cp -a /systemd-selinux/. /sysroot/
+    cp -a /pam-selinux/. /sysroot/
     rm -rf /sysroot/usr/lib/debug
 
   - |
