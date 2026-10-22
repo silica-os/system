@@ -1,0 +1,14 @@
+[Unit]
+Description=Mark the running Silica version as good
+Documentation=file:/usr/share/doc/silica/boot.md
+Requires=boot-complete.target
+After=boot-complete.target local-fs.target
+ConditionPathExists=/sys/firmware/efi/efivars
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/silica/silica-boot bless
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

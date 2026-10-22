@@ -1,0 +1,9 @@
+[Unit]
+Description=Download and stage the next Silica version
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/systemd/systemd-sysupdate update
+ExecStartPost=/usr/libexec/silica/silica-boot sync

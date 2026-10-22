@@ -5,7 +5,7 @@ description: |
   It signs kernel modules and the system image's dm-verity root hash.
 
 build-depends:
-- freedesktop-sdk.bst:public-stacks/runtime-minimal.bst
+- freedesktop-sdk.bst:public-stacks/runtime-gnu.bst
 
 config:
   install-commands:

@@ -1,0 +1,14 @@
+[Unit]
+Description=Silica Recovery menu
+After=basic.target plymouth-quit.service
+Conflicts=getty@tty1.service
+
+[Service]
+Type=idle
+ExecStart=/usr/libexec/silica/silica-recovery
+StandardInput=tty-force
+StandardOutput=tty
+StandardError=tty
+TTYPath=/dev/console
+TTYReset=yes
+Restart=always

@@ -1,0 +1,5 @@
+[Unit]
+Description=Silica Recovery
+Requires=basic.target silica-recovery.service
+After=basic.target silica-recovery.service
+AllowIsolate=yes

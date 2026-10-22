@@ -1,0 +1,10 @@
+NAME="Silica"
+ID=silica
+PRETTY_NAME="Silica @VERSION@"
+VERSION="@VERSION@"
+VERSION_ID=@VERSION@
+IMAGE_ID=silica
+IMAGE_VERSION=@VERSION@
+HOME_URL="https://github.com/silica-os"
+BUG_REPORT_URL="https://github.com/silica-os/system/issues"
+ANSI_COLOR="0;36"

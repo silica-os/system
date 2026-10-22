@@ -248,13 +248,23 @@ The app format is its own spec (drag-and-drop install, per-app widgets). From th
 Third-party Linux apps no longer run as Flatpaks. They must be packaged as Silica bundles: an SDK
 and a bundling tool will make that easy for open-source apps.
 
-## 5. Open points
+## 5. Decisions (2026-10-22)
 
-1. ~~Secure Boot on stock PCs~~: decided. Off or own keys for now, shim-review started ASAP (§1).
-2. **Root filesystem** for `root`/`/Users` data: btrfs (snapshots, compression, fast
-   copies, closest to APFS) or ext4 (simpler)? Proposal: btrfs inside LUKS2.
-3. **Patented codecs** (H.264/HEVC/AAC): hardware decode via VA-API and openh264 only, or the full
-   software codecs (legal review per country)?
-4. **Xwayland** for old X11 apps packaged as bundles: in the image, optional extension, or never?
-5. **Architectures:** x86_64 first; aarch64 (Snapdragon X, Apple Silicon via Asahi) later?
-6. **Kernel line:** mainline stable (newest hardware support) as proposed, or LTS?
+1. **Secure Boot:** off or our own keys at first; shim-review as soon as possible (§1).
+2. **Data partition:** btrfs inside LUKS2, unlocked by the TPM2. A TPM 2.0 is required.
+3. **Codecs:** open codecs in software; H.264/HEVC only through VA-API hardware decoding and
+   openh264.
+4. **Xwayland:** not in the base image; later as an optional signed system extension.
+5. **Architecture:** x86_64 first. 32-bit compatibility (`IA32_EMULATION`) is off, as on macOS.
+6. **Kernel:** mainline stable, following freedesktop-sdk's release (7.2 today).
+7. **Flatpak:** dropped. One Silica app format (drag-and-drop install, per-app widgets), its own
+   spec.
+
+## 6. Not done yet
+
+- kCFI needs a Clang-built kernel; the kernel is built with GCC for now.
+- zsh, thermald, bolt, fprintd, power-profiles-daemon, switcheroo-control, brltty, espeak-ng,
+  smartmontools, nvme-cli, ipp-usb, sane-airscan, Intel microcode and OpenVPN have no
+  freedesktop-sdk recipe: Silica adds its own elements for them.
+- SELinux policy and IPE policy (the kernel features are built in).
+- Signed sysupdate manifests (`Verify=false` until the update server signs `SHA256SUMS`).
