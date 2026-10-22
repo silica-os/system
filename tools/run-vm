@@ -1,0 +1,56 @@
+#!/bin/sh
+# Boots the Silica disk image in QEMU with UEFI (OVMF) and an emulated TPM2.
+#
+#   tools/run-vm [--fresh] [--secure-boot] [--serial FILE] [--headless]
+#
+# The VM state (disk overlay, UEFI variables, TPM) lives in out/vm and
+# survives restarts; --fresh starts over from the built image.
+set -eu
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+OUT="$ROOT/out"
+VM="$OUT/vm"
+IMG=registry.gitlab.com/freedesktop-sdk/infrastructure/freedesktop-sdk-docker-images/bst2:0a258dcf304505c338629e6a477b3d4b6ae3f01f
+fresh=0 secure=0 serial=stdio display="-display gtk"
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --fresh) fresh=1 ;;
+    --secure-boot) secure=1 ;;
+    --serial) serial="file:$2"; shift ;;
+    --headless) display="-display none" ;;
+    *) echo "unknown option: $1" >&2; exit 2 ;;
+  esac
+  shift
+done
+
+[ -f "$OUT/image/silica.img" ] || { echo "no image: run tools/checkout-image first" >&2; exit 1; }
+if [ "$fresh" = 1 ]; then rm -rf "$VM"; fi
+mkdir -p "$VM/tpm"
+if [ ! -f "$VM/disk.qcow2" ]; then
+  qemu-img create -q -f qcow2 -F raw -b "$OUT/image/silica.img" "$VM/disk.qcow2" 64G
+fi
+if [ "$secure" = 1 ]; then
+  code=/usr/share/OVMF/OVMF_CODE_4M.secboot.fd vars=/usr/share/OVMF/OVMF_VARS_4M.fd
+else
+  code=/usr/share/OVMF/OVMF_CODE_4M.fd vars=/usr/share/OVMF/OVMF_VARS_4M.fd
+fi
+[ -f "$VM/efivars.fd" ] || cp "$vars" "$VM/efivars.fd"
+
+# swtpm comes from the BuildStream container; the socket is shared.
+tpm_name="silica-swtpm-$$"
+docker run -d --rm --name "$tpm_name" -u "$(id -u):$(id -g)" -v "$VM/tpm:/tpm" "$IMG" \
+  swtpm socket --tpm2 --tpmstate dir=/tpm --ctrl type=unixio,path=/tpm/swtpm.sock --log level=1 >/dev/null
+trap 'docker stop -t 1 "$tpm_name" >/dev/null 2>&1 || true' EXIT
+i=0; while [ ! -S "$VM/tpm/swtpm.sock" ] && [ $i -lt 50 ]; do sleep 0.1; i=$((i+1)); done
+
+# shellcheck disable=SC2086
+qemu-system-x86_64 -machine q35,smm=on -accel kvm -cpu host -smp 4 -m 4G \
+  -global driver=cfi.pflash01,property=secure,value=on \
+  -drive if=pflash,format=raw,unit=0,file="$code",readonly=on \
+  -drive if=pflash,format=raw,unit=1,file="$VM/efivars.fd" \
+  -chardev socket,id=chrtpm,path="$VM/tpm/swtpm.sock" \
+  -tpmdev emulator,id=tpm0,chardev=chrtpm -device tpm-tis,tpmdev=tpm0 \
+  -drive if=none,id=disk,file="$VM/disk.qcow2",format=qcow2 \
+  -device virtio-blk-pci,drive=disk,bootindex=1 \
+  -netdev user,id=net0 -device virtio-net-pci,netdev=net0 \
+  -device virtio-vga -device qemu-xhci -device usb-tablet \
+  -serial "$serial" $display

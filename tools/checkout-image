@@ -1,0 +1,9 @@
+#!/bin/sh
+# Builds the disk image and copies it to out/image (and the update payload
+# to out/image/update).
+set -eu
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+"$ROOT/tools/bst" build silica/image/disk.bst
+rm -rf "$ROOT/out/image"
+mkdir -p "$ROOT/out"
+"$ROOT/tools/bst" artifact checkout silica/image/disk.bst --directory out/image

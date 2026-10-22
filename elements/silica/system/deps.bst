@@ -68,3 +68,4 @@ depends:
 - freedesktop-sdk.bst:components/noto-emoji.bst
 # Silica.
 - silica/system/config.bst
+- silica/system/tools.bst

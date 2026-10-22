@@ -5,7 +5,10 @@ IMG=registry.gitlab.com/freedesktop-sdk/infrastructure/freedesktop-sdk-docker-im
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 CACHE="${SILICA_BST_CACHE:-$HOME/build/bst-cache}"
 mkdir -p "$CACHE"
+# BuildStream runs as root in the container: buildbox stages through FUSE,
+# which an unprivileged container user cannot mount. Files it writes into
+# the project are handed back to the calling user afterwards.
 exec docker run --rm --privileged --network host \
-  -u "$(id -u):$(id -g)" -e HOME=/tmp/home -e XDG_CACHE_HOME=/cache \
+  -e HOME=/tmp/home -e XDG_CACHE_HOME=/cache -e OWNER="$(id -u):$(id -g)" \
   -v "$CACHE:/cache" -v "$ROOT:/src" -w /src \
-  "$IMG" sh -c 'mkdir -p /tmp/home && exec bst "$@"' bst "$@"
+  "$IMG" sh -c 'mkdir -p /tmp/home; bst "$@"; rc=$?; chown -R "$OWNER" /src/.bst /src/out /src/elements 2>/dev/null; exit $rc' bst "$@"
