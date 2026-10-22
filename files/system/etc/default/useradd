@@ -1,0 +1,8 @@
+# Defaults of useradd(8). Silica's login shell is zsh.
+GROUP=100
+HOME=/Users
+INACTIVE=-1
+EXPIRE=
+SHELL=/usr/bin/zsh
+SKEL=/etc/skel
+CREATE_MAIL_SPOOL=no

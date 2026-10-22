@@ -1,0 +1,20 @@
+# System-wide zsh configuration for interactive shells (copied once to /etc).
+HISTFILE=~/.zsh_history
+HISTSIZE=10000
+SAVEHIST=10000
+setopt HIST_IGNORE_DUPS SHARE_HISTORY
+
+autoload -Uz compinit && compinit -u -d "${XDG_CACHE_HOME:-$HOME/.cache}/zcompdump"
+
+# Home, End, Delete, Ctrl-arrows (terminfo-based).
+typeset -g -A key
+key[Home]=${terminfo[khome]}
+key[End]=${terminfo[kend]}
+key[Delete]=${terminfo[kdch1]}
+[[ -n ${key[Home]} ]] && bindkey -- "${key[Home]}" beginning-of-line
+[[ -n ${key[End]} ]] && bindkey -- "${key[End]}" end-of-line
+[[ -n ${key[Delete]} ]] && bindkey -- "${key[Delete]}" delete-char
+bindkey '^[[1;5C' forward-word
+bindkey '^[[1;5D' backward-word
+
+PROMPT='%n@%m %1~ %# '
