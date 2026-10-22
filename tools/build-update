@@ -1,0 +1,22 @@
+#!/bin/sh
+# Builds the update payload of another Silica version (for testing A/B
+# updates) into out/update-VERSION, from a copy of this project with
+# silica-version set to VERSION. The shared cache keeps it quick.
+#
+#   tools/build-update 0.1.1
+#   (cd out/update-0.1.1 && python3 -m http.server 8080)   # what the VM fetches
+set -eu
+v="$1"
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+copy="$ROOT/out/project-$v"
+rm -rf "$copy"
+mkdir -p "$copy"
+for f in project.conf elements files patches src keys tools; do cp -a "$ROOT/$f" "$copy/$f"; done
+rm -rf "$copy/src/target"
+sed -i "s/^  silica-version: .*/  silica-version: '$v'/" "$copy/project.conf"
+"$copy/tools/bst" build silica/image/disk.bst
+rm -rf "$copy/out/co" "$ROOT/out/update-$v"
+"$copy/tools/bst" artifact checkout silica/image/disk.bst --directory out/co
+mv "$copy/out/co/update" "$ROOT/out/update-$v"
+docker run --rm -v "$ROOT/out:/out" registry.gitlab.com/freedesktop-sdk/infrastructure/freedesktop-sdk-docker-images/bst2:0a258dcf304505c338629e6a477b3d4b6ae3f01f rm -rf "/out/project-$v"
+ls -la "$ROOT/out/update-$v"
