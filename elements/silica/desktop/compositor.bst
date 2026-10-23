@@ -46,7 +46,7 @@ sources:
 - kind: git_repo
   url: github:silica-os/compositor.git
   track: main
-  ref: 16bf7fbb110d124ffcfc2952357039c5b43c7c6c
+  ref: 2c8e6bab0ac408bfded082d10bcba068af543443
 - kind: cargo2
   cargo-lock: Cargo.lock
   ref:
@@ -187,6 +187,14 @@ sources:
     version: 1.5.2
     sha: 01a7799fd6b852db0e61728dde9a204c423b44d689dbd432522543614b490e78
   - kind: registry
+    name: crossbeam-deque
+    version: 0.8.8
+    sha: 622f3fc73690be383c7214310406f28a90e6edeadc3cea882f9d71e495b9711a
+  - kind: registry
+    name: crossbeam-epoch
+    version: 0.9.21
+    sha: dc74980687109a3b14c72fd458107bf0baa1da1a1a805e178d15501ba9b86d9d
+  - kind: registry
     name: crossbeam-utils
     version: 0.8.23
     sha: a31eee39dddec8330830986fcd7625edb5a24ec90ea038215273bbc3adb08ac6
@@ -223,6 +231,10 @@ sources:
     version: 0.8.1
     sha: ecc8e1361066d91f5ffccff060a3c3be9c3ecde15be2959c1937595f7a82a9f8
   - kind: registry
+    name: either
+    version: 1.19.0
+    sha: 0e9c71c2167ca323c882b99918929403426e2373ea17242ff5653e0d5e1058be
+  - kind: registry
     name: endi
     version: 1.1.1
     sha: 66b7e2430c6dff6a955451e2cfc438f09cea1965a9d6f87f7e3b90decc014099
@@ -258,6 +270,10 @@ sources:
     name: fdeflate
     version: 0.3.7
     sha: 1e6853b52649d4ac5c0bd02320cddc5ba956bdb407c4b75a2c6b75bf51500f8c
+  - kind: registry
+    name: fearless_simd
+    version: 0.7.0
+    sha: f4beca3cb2444e3304ac30843cc091f44ed58932353cd492ce740067bfce6b12
   - kind: registry
     name: find-msvc-tools
     version: 0.1.14
@@ -443,10 +459,6 @@ sources:
     version: 2.2.1
     sha: f38d5652c16fde515bb1ecef450ab0f6a219d619a7274976324d5e377f7dceba
   - kind: registry
-    name: paste
-    version: 1.0.15
-    sha: 57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a
-  - kind: registry
     name: pin-project-lite
     version: 0.2.17
     sha: a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd
@@ -454,14 +466,6 @@ sources:
     name: piper
     version: 0.2.5
     sha: c835479a4443ded371d6c535cbfd8d31ad92c5d23ae9770a61bc155e4992a3c1
-  - kind: registry
-    name: pixman
-    version: 0.2.1
-    sha: cea217d496c19ac0a8e502b37078e1f683d16344adee9eb247a5d57c165e1edf
-  - kind: registry
-    name: pixman-sys
-    version: 0.1.0
-    sha: a1a0483e89e81d7915defe83c51f23f6800594d64f6f4a21253ce87fd8444ada
   - kind: registry
     name: pkg-config
     version: 0.3.34
@@ -522,6 +526,14 @@ sources:
     name: rand_core
     version: 0.9.5
     sha: 76afc826de14238e6e8c374ddcc1fa19e374fd8dd986b0d2af0d02377261d83c
+  - kind: registry
+    name: rayon
+    version: 1.12.0
+    sha: fb39b166781f92d482534ef4b4b1b2568f42613b53e5b6c160e24cfbfa30926d
+  - kind: registry
+    name: rayon-core
+    version: 1.13.0
+    sha: 22e18b0f0062d30d4230b2e85ff77fdfe4326feb054b9783a3460d8435c8ab91
   - kind: registry
     name: regex-automata
     version: 0.4.18
@@ -608,16 +620,8 @@ sources:
     sha: 32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd
   - kind: registry
     name: thiserror
-    version: 1.0.69
-    sha: b6aaf5339b578ea85b50e080feb250a3e8ae8cfcdff9a461c9ec2904bc923f52
-  - kind: registry
-    name: thiserror
     version: 2.0.21
     sha: 09e52cb86a36cede5cb101bf8908837b3e4c6e5e59fe7fd85c23fb56200d189e
-  - kind: registry
-    name: thiserror-impl
-    version: 1.0.69
-    sha: 4fee6c4efc90059e10f81e6d42c60a18f76588c3d74cb83a0b242a2b6c7504c1
   - kind: registry
     name: thiserror-impl
     version: 2.0.21

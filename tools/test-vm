@@ -335,6 +335,9 @@ SESSION_CHECKS = [
      "f() { journalctl -q _SYSTEMD_USER_UNIT=silica-test-client.service -o cat | sed -n 's/^frames //p' | tail -n 1; };"
      " for i in $(seq 20); do a=$(f); [ -n \"$a\" ] && break; sleep 1; done;"
      " sleep 3; b=$(f); [ -n \"$a\" ] && [ \"$b\" -gt \"$a\" ]"),
+    # The compositor has no JIT entitlement: no shader compiled at run time, on a GPU or not.
+    ("the compositor maps no anonymous executable memory",
+     "p=$(pidof silica-compositor) && [ -n \"$p\" ] && ! awk '$2 ~ /x/ && NF < 6' /proc/$p/maps | grep -q ."),
     # IPE lets anonymous executable memory through; SELinux's execmem decides it, and the
     # user's domain is not entitled to JIT.
     ("JIT runs past IPE, and SELinux decides it per domain",
@@ -349,6 +352,25 @@ VT_CHECKS = [
      " && f() { journalctl -q _SYSTEMD_USER_UNIT=silica-test-client.service -o cat | sed -n 's/^frames //p' | tail -n 1; };"
      f" {ACTIVE}"
      " && a=$(f) && sleep 3 && b=$(f) && [ \"$b\" -gt \"$a\" ]"),
+]
+PERF = f"{USER} --wait --pipe silica-cli perf.render"
+# The frames the compositor draws (perf.render): none when nothing changes, none for the
+# pointer alone (the cursor plane), and the time of a small damage.
+FRAME_CHECKS = [
+    ("an idle desktop draws no frames",
+     "systemctl -q -M tester@.host --user stop silica-test-client.service && sleep 1"
+     f" && {PERF} reset=true >/dev/null && sleep 3"
+     f" && {PERF} | grep -Eq '^  \"frames\": 0,'"),
+    ("pointer motion only moves the cursor plane",
+     f"{PERF} reset=true >/dev/null"
+     f" && for x in 100 200 300 400 500 600; do {USER} --wait --pipe silica-cli input.pointer_move x=$x y=300"
+     " >/dev/null; sleep 0.1; done && sleep 0.5"
+     f" && {PERF} >/run/perf.json && grep -Eq '^  \"frames\": 0,' /run/perf.json"
+     " && grep -Eq '^  \"planes_only\": [1-9]' /run/perf.json"),
+    ("a client damaging 64×64 gets drawn frames",
+     f"{USER} --unit=silica-test-damage /usr/libexec/silica/tests/silica-test-client --damage 64x64 --seconds 20"
+     f" && sleep 3 && {PERF} reset=true >/dev/null && sleep 5"
+     f" && {PERF} >/run/perf.json && grep -Eq '^  \"frames\": [1-9]' /run/perf.json"),
 ]
 # Real apps, from the compositor-apps extension (--apps): each maps its window and keeps running.
 APPS = [
@@ -499,6 +521,10 @@ def test_desktop(report, vm, sysext, apps, appkit):
         report.failed += 1
     for name, command in VT_CHECKS:
         report.check(vm, name, command, timeout=180)
+    for name, command in FRAME_CHECKS:
+        if not report.check(vm, name, command, timeout=180):
+            show(vm, "perf.render", "cat /run/perf.json 2>/dev/null | head -n 12")
+    show(vm, "perf.render with 64×64 damage", "grep -E '^  \"(frames|p50_ms|p99_ms|max_ms)\"' /run/perf.json")
     for index, (name, command, app_id) in enumerate(APPS if apps else []):
         if not report.check(vm, name, app_check(index, command, app_id), timeout=180):
             show(vm, f"{command} journal", f"journalctl -q --user-unit=silica-test-app{index}.service"
