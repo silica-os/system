@@ -34,7 +34,7 @@ sources:
 - kind: git_repo
   url: github:silica-os/appkit.git
   track: main
-  ref: aba98cc825a96202ae943739bb1234d129f29925
+  ref: 76fd37ad9a76c075af50a0dd372a75e487285bb1
 - kind: cargo2
   cargo-lock: Cargo.lock
   ref:
