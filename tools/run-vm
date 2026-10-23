@@ -4,13 +4,17 @@
 #   tools/run-vm [--fresh] [--secure-boot] [--serial FILE | --serial-socket PATH]
 #                [--headless] [--debug-socket PATH] [--target-disk | --boot-target]
 #                [--monitor-socket PATH] [--gpu virgl|venus] [--outputs N]
-#                [--resolution WxH] [--fullscreen]
+#                [--resolution WxH] [--fullscreen] [--touchpad EVDEV]
 #
 # --gpu gives the VM a virtio-gpu with host OpenGL (virgl) or Vulkan (venus);
 # without it Mesa renders in software (softpipe: IPE refuses llvmpipe's JIT).
 # --outputs gives the virtio-gpu N display outputs (default 1).
 # --resolution sets the outputs' preferred mode (e.g. 1920x1200, the host
 # screen); --fullscreen opens the QEMU window full screen.
+# --touchpad passes a host evdev device (e.g. /dev/input/by-path/...-event-mouse)
+# to the VM as a virtio input device, so the guest sees a real multitouch
+# touchpad with its gestures. QEMU grabs it while the VM runs; it needs read
+# and write access to the device node.
 # --monitor-socket exposes the QEMU monitor (e.g. 'screendump FILE').
 # --target-disk attaches an empty 64G disk (out/vm/target.qcow2) for
 # silica-install; --boot-target then boots from that disk alone.
@@ -32,7 +36,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="$ROOT/out"
 VM="$OUT/vm"
 IMG=registry.gitlab.com/freedesktop-sdk/infrastructure/freedesktop-sdk-docker-images/bst2:0a258dcf304505c338629e6a477b3d4b6ae3f01f
-gpu="" outputs=1 fresh=0 secure=0 serial=stdio display="-display gtk" uki="" append="" creds="" debug="" target=0 only_target=0 monitor="" res="" full=""
+gpu="" outputs=1 fresh=0 secure=0 serial=stdio display="-display gtk" uki="" append="" creds="" debug="" target=0 only_target=0 monitor="" res="" full="" touchpad=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --fresh) fresh=1 ;;
@@ -47,6 +51,7 @@ while [ $# -gt 0 ]; do
     --outputs) outputs="$2"; shift ;;
     --resolution) res="$2"; shift ;;
     --fullscreen) full=",full-screen=on" ;;
+    --touchpad) touchpad="-device virtio-input-host-pci,evdev=$2"; shift ;;
     --monitor-socket) monitor="-monitor unix:$2,server=on,wait=off"; shift ;;
     --uki) uki="$2"; shift ;;
     --append) append="$2"; shift ;;
@@ -125,5 +130,5 @@ qemu-system-x86_64 "$@" -machine q35,smm=on -accel kvm -cpu host -smp 4 -m 4G \
   -drive if=none,id=disk,file="$main",format=qcow2 \
   -device virtio-blk-pci,drive=disk,bootindex=1 \
   -netdev user,id=net0 -device virtio-net-pci,netdev=net0 \
-  $vga -device qemu-xhci -device usb-tablet \
+  $vga -device qemu-xhci -device usb-tablet $touchpad \
   -serial "$serial" $debug $monitor $display $creds
