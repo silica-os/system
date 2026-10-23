@@ -235,7 +235,7 @@ Xwayland: open point, §5.
 ### The graphical session
 
 - **The compositor** ([silica-os/compositor](https://github.com/silica-os/compositor)) is built
-  by `elements/silica/desktop/compositor.bst` from a pinned commit (`tools/update-compositor REF`
+  by `elements/silica/desktop/compositor.bst` from a pinned commit (`tools/update-cargo compositor REF`
   moves the commit and regenerates the crate list from its `Cargo.lock`). The image carries
   `silica-compositor`, `silica-cli` and `silica-action` (`compositor-system.bst`); the test
   client stays out.

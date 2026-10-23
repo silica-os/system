@@ -1,0 +1,65 @@
+#!/usr/bin/env python3
+"""Points elements/silica/desktop/NAME.bst at a commit of silica-os/NAME.
+
+  tools/update-cargo NAME [REF]
+
+NAME is a Rust repo built by an element of that name (compositor, appkit). REF
+(default: origin/main) is resolved in ~/silica/NAME (or $SILICA_<NAME>). The
+cargo2 source gets one entry per crates.io package of that commit's Cargo.lock.
+"""
+import os
+import re
+import subprocess
+import sys
+import tomllib
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+REGISTRY = "registry+https://github.com/rust-lang/crates.io-index"
+
+
+def git(repo, *args):
+    return subprocess.run(["git", "-C", repo, *args], check=True, capture_output=True, text=True).stdout
+
+
+def main():
+    if len(sys.argv) < 2:
+        sys.exit("usage: tools/update-cargo NAME [REF]")
+    name = sys.argv[1]
+    ref = sys.argv[2] if len(sys.argv) > 2 else "origin/main"
+    element = os.path.join(ROOT, f"elements/silica/desktop/{name}.bst")
+    repo = os.environ.get(f"SILICA_{name.upper()}", os.path.expanduser(f"~/silica/{name}"))
+    commit = git(repo, "rev-parse", f"{ref}^{{commit}}").strip()
+    lock = tomllib.loads(git(repo, "show", f"{commit}:Cargo.lock"))
+    crates = []
+    for package in lock.get("package", []):
+        source = package.get("source")
+        if source is None:
+            continue
+        if source != REGISTRY:
+            sys.exit(f"{package['name']}: only crates.io sources are supported, not {source}")
+        crates.append(
+            "  - kind: registry\n"
+            f"    name: {package['name']}\n"
+            f"    version: {package['version']}\n"
+            f"    sha: {package['checksum']}\n"
+        )
+    with open(element, encoding="utf-8") as f:
+        text = f.read()
+    head = text[: text.index("sources:\n")]
+    sources = (
+        "sources:\n"
+        "- kind: git_repo\n"
+        f"  url: github:silica-os/{name}.git\n"
+        "  track: main\n"
+        f"  ref: {commit}\n"
+        "- kind: cargo2\n"
+        "  cargo-lock: Cargo.lock\n"
+        "  ref:\n" + "".join(crates)
+    )
+    with open(element, "w", encoding="utf-8") as f:
+        f.write(head + sources)
+    print(f"{name}.bst: {commit[:12]}, {len(crates)} crates")
+
+
+if __name__ == "__main__":
+    main()

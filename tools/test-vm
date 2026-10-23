@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Boots a fresh Silica image in QEMU and checks the base system.
 
-  tools/test-vm [--update VERSION] [--install] [--desktop] [--gpu virgl|venus] [--keep]
+  tools/test-vm [--update VERSION] [--install] [--desktop [--apps] [--appkit]]
+                [--gpu virgl|venus] [--keep]
 
 The first boot gets its answers from credentials (locale, keymap, timezone
 and a homed user "tester"), so it needs no screen. The checks run as root in
@@ -18,6 +19,9 @@ the debug shell on ttyS1, which works only with Secure Boot off.
 --apps            with --desktop: also installs compositor-apps (GTK 3, GTK 4 and
                   Qt 6 apps, tools/dev-sysext --build-only compositor-apps) and
                   checks that each maps its window.
+--appkit          with --desktop: also installs appkit-dev (tools/dev-sysext
+                  --build-only appkit-dev), launches the Kit Gallery and checks
+                  that it maps its window and draws it.
 --gpu             passes the GPU to tools/run-vm (otherwise software rendering).
 --keep            leaves out/vm and the logs in place after a failure.
 
@@ -437,9 +441,20 @@ def show(vm, what, command):
         print(f"      {line}", flush=True)
 
 
-def test_desktop(report, vm, sysext, apps):
+def gallery_pixels(path):
+    """Counts the near-white pixels (the Kit Gallery's light window) in a PPM screendump."""
+    with open(path, "rb") as f:
+        data = f.read()
+    m = re.match(rb"P6\s+(\d+)\s+(\d+)\s+(\d+)\s", data)
+    if not m:
+        return 0
+    pixels = data[m.end():]
+    return sum(1 for i in range(0, len(pixels) - 2, 3) if min(pixels[i:i + 3]) > 0xf0)
+
+
+def test_desktop(report, vm, sysext, apps, appkit):
     ext = f"{ROOT}/out/extensions"
-    names = [sysext, *(["compositor-apps"] if apps else [])]
+    names = [sysext, *(["compositor-apps"] if apps else []), *(["appkit-dev"] if appkit else [])]
     for name in names:
         report.must(os.path.exists(f"{ext}/silica-{name}.raw"), f"{ext}/silica-{name}.raw exists")
     server = subprocess.Popen([sys.executable, "-m", "http.server", "8080"], cwd=ext,
@@ -489,6 +504,18 @@ def test_desktop(report, vm, sysext, apps):
             show(vm, f"{command} journal", f"journalctl -q --user-unit=silica-test-app{index}.service"
                  f" _UID=$(id -u tester) -o cat | tail -n 15 | cut -c1-400;"
                  f" {USER} --wait --pipe silica-cli window.list | cut -c1-400")
+    if appkit:
+        gallery = f"{LOGDIR}/silica-test-gallery.ppm"
+        mapped = report.check(vm, "the Kit Gallery maps its window",
+                              app_check(len(APPS), "/usr/bin/appkit-gallery", "dev.silica.KitGallery"),
+                              timeout=180)
+        shot = mapped and (vm.screendump(gallery) or compositor_screenshot(vm, gallery))
+        white = gallery_pixels(gallery) if shot else 0
+        # The 900×800 window is mostly its light background.
+        ok = white > 900 * 800 // 2
+        print(f"{'PASS' if ok else 'FAIL'}  the Kit Gallery draws its window ({white} light pixels)", flush=True)
+        if not ok:
+            report.failed += 1
     report.check(vm, "the compositor logged no errors",
                  "! journalctl -q _SYSTEMD_USER_UNIT=silica-compositor.service -p err -o cat | grep .")
 
@@ -504,6 +531,8 @@ def main():
                         help="the extension --desktop installs (compositor-dev: a dev build)")
     parser.add_argument("--apps", action="store_true",
                         help="with --desktop: also install compositor-apps and check GTK and Qt apps")
+    parser.add_argument("--appkit", action="store_true",
+                        help="with --desktop: also install appkit-dev and check the Kit Gallery")
     args = parser.parse_args()
 
     creds = []
@@ -517,7 +546,7 @@ def main():
     try:
         boot_and_check(report, vm, BASE_CHECKS)
         if args.desktop:
-            test_desktop(report, vm, args.sysext, args.apps)
+            test_desktop(report, vm, args.sysext, args.apps, args.appkit)
         if args.update:
             test_update(report, vm, args.update)
         if args.install:

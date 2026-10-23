@@ -3,7 +3,7 @@ description: |
   Silica's Wayland compositor (silica-os/compositor): silica-compositor,
   silica-cli and silica-action. silica-test-client goes to the "tests"
   domain, which the system image leaves out (compositor-system.bst); the
-  test extension carries it. Update with tools/update-compositor.
+  test extension carries it. Update with tools/update-cargo compositor.
 
 build-depends:
 - freedesktop-sdk.bst:public-stacks/buildsystem-rust.bst
