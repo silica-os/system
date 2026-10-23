@@ -1,7 +1,8 @@
 kind: manual
 description: |
   AppKit (silica-os/appkit), Silica's system toolkit: libappkit.so with its
-  C header, and the Kit Gallery (appkit-gallery), which shows every control.
+  C header, the Kit Gallery (appkit-gallery), which shows every control, and the
+  test apps appkit-extras, appkit-touchpad and appkit-materials.
   Update with tools/update-cargo appkit.
 
 build-depends:
@@ -21,10 +22,11 @@ variables:
 
 config:
   build-commands:
-  - cargo build --offline --locked --release -p appkit -p appkit-gallery
+  - cargo build --offline --locked --release -p appkit -p appkit-gallery -p appkit-extras -p appkit-touchpad -p appkit-materials
 
   install-commands:
-  - install -Dm755 -t '%{install-root}%{bindir}' target/release/appkit-gallery
+  - install -Dm755 -t '%{install-root}%{bindir}' target/release/appkit-gallery target/release/appkit-extras
+    target/release/appkit-touchpad target/release/appkit-materials
   - install -Dm755 -t '%{install-root}%{libdir}' target/release/libappkit.so
   - install -Dm644 -t '%{install-root}%{includedir}' include/appkit.h
 
@@ -32,7 +34,7 @@ sources:
 - kind: git_repo
   url: github:silica-os/appkit.git
   track: main
-  ref: 7c7be8a7e5898c2eaae6e7735742b777711b8d45
+  ref: 46b9e1fb72b128ff8abac14d0c2d6da0c1a291be
 - kind: cargo2
   cargo-lock: Cargo.lock
   ref:
