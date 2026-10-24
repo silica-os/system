@@ -245,7 +245,11 @@ Xwayland: open point, §5.
   The compositor exports `WAYLAND_DISPLAY` to the user manager and the session bus. The graphical
   login comes with AppKit.
 - **GPU in the VM:** `tools/run-vm --gpu virgl` (OpenGL) or `--gpu venus` (Vulkan); without it
-  the compositor draws with softpipe, because llvmpipe is a JIT (see JIT below).
+  the compositor draws with its own CPU renderer, compiled ahead of time, because llvmpipe is a
+  JIT (see JIT below). `tools/test-vm --desktop` checks its frame budget: p99 under 2.42 ms per
+  drawn frame for a window dragged under glass, with the host's cores at a fixed clock
+  (`energy_performance_preference` set to `performance`; a balanced host runs the bursts of a
+  frame at 0.4-1.7 GHz).
 
 ### System extensions and the dev loop
 
@@ -332,7 +336,8 @@ Built and verified in QEMU (OVMF, swtpm, KVM):
   - SELinux's `execmem` decides JIT per domain. `allow_execmem` stays off, so `user_t` has none.
     The `silica_jit` module's `silica_jit_entitled(domain)` grants it, and the app format will
     grant it to the apps that declare it.
-  - The compositor holds no entitlement and renders with softpipe when no GPU driver binds.
+  - The compositor holds no entitlement and renders on the CPU with its own renderer when no
+    GPU driver binds. The clients it starts inherit `GALLIUM_DRIVER=softpipe`.
   - While SELinux is permissive (system#11), the denial is only logged. `tools/test-vm
     --desktop` checks both that the code runs and that SELinux logs the denial.
 - **SELinux:** the `silica` policy loads on every boot, the first one included, in permissive mode.

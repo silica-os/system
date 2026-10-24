@@ -24,6 +24,8 @@ the debug shell on ttyS1, which works only with Secure Boot off.
                   that it maps its window and draws it.
 --gpu             passes the GPU to tools/run-vm (otherwise software rendering).
 --keep            leaves out/vm and the logs in place after a failure.
+--hold            keeps the VM running after the checks, until SIGINT or SIGTERM,
+                  with its debug shell free for tools/vm-console.
 
 Logs go to /dev/shm/silica-test-*. Exits non-zero when a check fails.
 """
@@ -32,6 +34,7 @@ import base64
 import json
 import os
 import re
+import signal
 import socket
 import struct
 import subprocess
@@ -337,7 +340,7 @@ SESSION_CHECKS = [
      " sleep 3; b=$(f); [ -n \"$a\" ] && [ \"$b\" -gt \"$a\" ]"),
     # The compositor has no JIT entitlement: no shader compiled at run time, on a GPU or not.
     ("the compositor maps no anonymous executable memory",
-     "p=$(pidof silica-compositor) && [ -n \"$p\" ] && ! awk '$2 ~ /x/ && NF < 6' /proc/$p/maps | grep -q ."),
+     "p=$(pidof silica-compositor) && [ -n \"$p\" ] && ! grep -Eq '^[^ ]+ ..x. [^ ]+ [^ ]+ [^ ]+ *$' /proc/$p/maps"),
     # IPE lets anonymous executable memory through; SELinux's execmem decides it, and the
     # user's domain is not entitled to JIT.
     ("JIT runs past IPE, and SELinux decides it per domain",
@@ -372,6 +375,20 @@ FRAME_CHECKS = [
      f" && sleep 3 && {PERF} reset=true >/dev/null && sleep 5"
      f" && {PERF} >/run/perf.json && grep -Eq '^  \"frames\": [1-9]' /run/perf.json"),
 ]
+# The CPU frame budget (compositor#9), without a GPU: the scene of the compositor's
+# tests/frame_budget.rs, a decorated window dragged at 60 Hz under a menu bar and a Dock on
+# glass, draws each frame within 2.42 ms at p99. It holds with the host's cores at a fixed
+# clock (energy_performance_preference "performance"): frames come in bursts of a few
+# milliseconds, which a balanced host runs at 0.4-1.7 GHz.
+SCENE_CHECK = (
+    "a window dragged under glass draws each frame within 2.42 ms (p99)",
+    "systemctl -q -M tester@.host --user stop silica-test-damage.service 2>/dev/null;"
+    f" {USER} --wait --pipe /usr/libexec/silica/tests/silica-test-client --scene --seconds 10"
+    " | sed -n 's/^perf //p' >/run/scene.json"
+    " && sed 's/,\"stages\".*//' /run/scene.json | tr , '\\n' >/run/perf.json"
+    " && grep -Eq '\"frames\":[1-9][0-9]{2}' /run/perf.json"
+    " && p=$(sed -n 's/^\"p99_ms\"://p' /run/perf.json | head -n 1)"
+    " && [ \"$(printf '%.0f' \"${p}e3\")\" -lt 2420 ]")
 # Real apps, from the compositor-apps extension (--apps): each maps its window and keeps running.
 APPS = [
     ("a GTK 3 app maps a window", "gtk3-demo", "gtk3-demo"),
@@ -474,7 +491,20 @@ def gallery_pixels(path):
     return sum(1 for i in range(0, len(pixels) - 2, 3) if min(pixels[i:i + 3]) > 0xf0)
 
 
-def test_desktop(report, vm, sysext, apps, appkit):
+def host_clock():
+    """The host's energy performance preferences, one per kind among its cores."""
+    found = set()
+    for cpu in os.listdir("/sys/devices/system/cpu"):
+        path = f"/sys/devices/system/cpu/{cpu}/cpufreq/energy_performance_preference"
+        try:
+            with open(path) as f:
+                found.add(f.read().strip())
+        except OSError:
+            pass
+    return found
+
+
+def test_desktop(report, vm, sysext, apps, appkit, gpu):
     ext = f"{ROOT}/out/extensions"
     names = [sysext, *(["compositor-apps"] if apps else []), *(["appkit-dev"] if appkit else [])]
     for name in names:
@@ -525,6 +555,14 @@ def test_desktop(report, vm, sysext, apps, appkit):
         if not report.check(vm, name, command, timeout=180):
             show(vm, "perf.render", "cat /run/perf.json 2>/dev/null | head -n 12")
     show(vm, "perf.render with 64×64 damage", "grep -E '^  \"(frames|p50_ms|p99_ms|max_ms)\"' /run/perf.json")
+    if not gpu:
+        clock = host_clock()
+        if clock != {"performance"}:
+            print(f"note: the host's cores run at {', '.join(sorted(clock)) or 'an unknown'} energy"
+                  " preference; the frame budget holds at a fixed clock: echo performance | sudo tee"
+                  " /sys/devices/system/cpu/cpu*/cpufreq/energy_performance_preference", flush=True)
+        report.check(vm, *SCENE_CHECK, timeout=180)
+        show(vm, "perf.render of the scene", "cat /run/perf.json; tr '{' '\\n' </run/scene.json | grep stage")
     for index, (name, command, app_id) in enumerate(APPS if apps else []):
         if not report.check(vm, name, app_check(index, command, app_id), timeout=180):
             show(vm, f"{command} journal", f"journalctl -q --user-unit=silica-test-app{index}.service"
@@ -546,6 +584,18 @@ def test_desktop(report, vm, sysext, apps, appkit):
                  "! journalctl -q _SYSTEMD_USER_UNIT=silica-compositor.service -p err -o cat | grep .")
 
 
+def hold(vm):
+    """Keeps the VM up for manual checks until SIGINT or SIGTERM."""
+    vm.debug.sock.close()
+    signal.signal(signal.SIGTERM, signal.default_int_handler)
+    print(f"holding: debug shell on {DEBUG}, monitor on {MONITOR}", flush=True)
+    try:
+        while True:
+            time.sleep(3600)
+    except KeyboardInterrupt:
+        pass
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--update", metavar="VERSION")
@@ -553,6 +603,7 @@ def main():
     parser.add_argument("--desktop", action="store_true")
     parser.add_argument("--gpu", choices=["virgl", "venus"])
     parser.add_argument("--keep", action="store_true")
+    parser.add_argument("--hold", action="store_true")
     parser.add_argument("--sysext", default="compositor-tests",
                         help="the extension --desktop installs (compositor-dev: a dev build)")
     parser.add_argument("--apps", action="store_true",
@@ -572,9 +623,11 @@ def main():
     try:
         boot_and_check(report, vm, BASE_CHECKS)
         if args.desktop:
-            test_desktop(report, vm, args.sysext, args.apps, args.appkit)
+            test_desktop(report, vm, args.sysext, args.apps, args.appkit, args.gpu)
         if args.update:
             test_update(report, vm, args.update)
+        if args.hold:
+            hold(vm)
         if args.install:
             report.check(vm, "installer writes the second disk",
                          "/usr/libexec/silica/silica-install --yes --disk /dev/$(basename $(readlink -f /dev/disk/by-id/virtio-silica-target))", timeout=1800)
