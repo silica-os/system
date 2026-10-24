@@ -26,6 +26,10 @@ the debug shell on ttyS1, which works only with Secure Boot off.
 --keep            leaves out/vm and the logs in place after a failure.
 --hold            keeps the VM running after the checks, until SIGINT or SIGTERM,
                   with its debug shell free for tools/vm-console.
+--window          shows the VM in a window on the host (with --gpu, a GL one)
+                  instead of running it headless; with --hold it stays usable.
+--resolution WxH  the display's preferred mode (tools/run-vm --resolution).
+--fullscreen      with --window: the window opens full screen.
 
 Logs go to /dev/shm/silica-test-*. Exits non-zero when a check fails.
 """
@@ -198,13 +202,13 @@ class Console:
 
 
 class Vm:
-    def __init__(self, args, log_name):
+    def __init__(self, args, log_name, window=False):
         self.log = open(f"{LOGDIR}/silica-test-{log_name}.log", "w")
         for path in (SERIAL, DEBUG, MONITOR):
             if os.path.exists(path):
                 os.unlink(path)
         self.proc = subprocess.Popen(
-            [f"{ROOT}/tools/run-vm", "--headless", "--serial-socket", SERIAL,
+            [f"{ROOT}/tools/run-vm", *([] if window else ["--headless"]), "--serial-socket", SERIAL,
              "--debug-socket", DEBUG, "--monitor-socket", MONITOR, *args],
             stdout=self.log, stderr=subprocess.STDOUT, start_new_session=True)
         deadline = time.time() + 60
@@ -624,6 +628,9 @@ def main():
     parser.add_argument("--gpu", choices=["virgl", "venus"])
     parser.add_argument("--keep", action="store_true")
     parser.add_argument("--hold", action="store_true")
+    parser.add_argument("--window", action="store_true")
+    parser.add_argument("--resolution", metavar="WxH")
+    parser.add_argument("--fullscreen", action="store_true")
     parser.add_argument("--sysext", default="compositor-tests",
                         help="the extension --desktop installs (compositor-dev: a dev build)")
     parser.add_argument("--apps", action="store_true",
@@ -639,7 +646,10 @@ def main():
 
     report = Report()
     gpu = ["--gpu", args.gpu] if args.gpu else []
-    vm = Vm(["--fresh", *gpu, *(["--target-disk"] if args.install else []), *creds], "boot")
+    display = [*(["--resolution", args.resolution] if args.resolution else []),
+               *(["--fullscreen"] if args.window and args.fullscreen else [])]
+    vm = Vm(["--fresh", *gpu, *display, *(["--target-disk"] if args.install else []), *creds],
+            "boot", window=args.window)
     try:
         boot_and_check(report, vm, BASE_CHECKS)
         if args.desktop:
