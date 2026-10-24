@@ -46,7 +46,7 @@ sources:
 - kind: git_repo
   url: github:silica-os/compositor.git
   track: main
-  ref: 1f72549037b777c8eb145ed227307cff965716bb
+  ref: 3e318cf685a3b52d130695637ac43be365d0edd2
 - kind: cargo2
   cargo-lock: Cargo.lock
   ref:
