@@ -375,20 +375,39 @@ FRAME_CHECKS = [
      f" && sleep 3 && {PERF} reset=true >/dev/null && sleep 5"
      f" && {PERF} >/run/perf.json && grep -Eq '^  \"frames\": [1-9]' /run/perf.json"),
 ]
-# The CPU frame budget (compositor#9), without a GPU: the scene of the compositor's
-# tests/frame_budget.rs, a decorated window dragged at 60 Hz under a menu bar and a Dock on
-# glass, draws each frame within 2.42 ms at p99. It holds with the host's cores at a fixed
-# clock (energy_performance_preference "performance"): frames come in bursts of a few
-# milliseconds, which a balanced host runs at 0.4-1.7 GHz.
-SCENE_CHECK = (
-    "a window dragged under glass draws each frame within 2.42 ms (p99)",
+# The frame budget (compositor#9) on the scene of the compositor's tests/frame_budget.rs: a
+# decorated window dragged at 60 Hz under a menu bar and a Dock on glass. Without a GPU each
+# frame takes under 2.42 ms of CPU at p99; with one, under 0.5 ms of CPU and 0.5 ms of GPU.
+# The CPU budget holds with the host's cores at a fixed clock (energy_performance_preference
+# "performance"): frames come in bursts of a few milliseconds, which a balanced host runs at
+# 0.4-1.7 GHz. The GPU's time is the host GPU's under virgl (SILICA_VM_RENDER_NODE picks it).
+def scene_check(gpu):
+    cpu_us, gpu_us = (500, 500) if gpu else (2420, None)
+    name = (f"a window dragged under glass draws each frame within {cpu_us / 1000:g} ms (p99)"
+            + (f" and {gpu_us / 1000:g} ms on the GPU" if gpu_us else ""))
+    command = ("systemctl -q -M tester@.host --user stop silica-test-damage.service 2>/dev/null;"
+               f" {USER} --wait --pipe /usr/libexec/silica/tests/silica-test-client --scene --seconds 10"
+               " | sed -n 's/^perf //p' >/run/scene.json"
+               " && sed 's/,\"stages\".*//' /run/scene.json | tr , '\\n' >/run/perf.json"
+               " && grep -Eq '\"frames\":[1-9][0-9]{2}' /run/perf.json"
+               " && p=$(sed -n 's/^\"p99_ms\"://p' /run/perf.json | head -n 1)"
+               f" && [ \"$(printf '%.0f' \"${{p}}e3\")\" -lt {cpu_us} ]")
+    if gpu_us:
+        command += (" && g=$(tr '{' '\\n' </run/scene.json | grep '\"stage\":\"gpu\"'"
+                    " | sed -n 's/.*\"p99_ms\":\\([0-9.e-]*\\),.*/\\1/p')"
+                    f" && [ -n \"$g\" ] && [ \"$(printf '%.0f' \"${{g}}e3\")\" -lt {gpu_us} ]")
+    return name, command
+
+
+# With a GPU, a full-screen client drawing into dmabufs goes to the display as is: its frames
+# are direct scanouts, with nothing composited.
+SCANOUT_CHECK = (
+    "a full-screen dmabuf client is scanned out directly",
     "systemctl -q -M tester@.host --user stop silica-test-damage.service 2>/dev/null;"
-    f" {USER} --wait --pipe /usr/libexec/silica/tests/silica-test-client --scene --seconds 10"
-    " | sed -n 's/^perf //p' >/run/scene.json"
-    " && sed 's/,\"stages\".*//' /run/scene.json | tr , '\\n' >/run/perf.json"
-    " && grep -Eq '\"frames\":[1-9][0-9]{2}' /run/perf.json"
-    " && p=$(sed -n 's/^\"p99_ms\"://p' /run/perf.json | head -n 1)"
-    " && [ \"$(printf '%.0f' \"${p}e3\")\" -lt 2420 ]")
+    f" {USER} --unit=silica-test-scanout /usr/libexec/silica/tests/silica-test-client --scanout --seconds 15"
+    f" && sleep 4 && {PERF} reset=true >/dev/null && sleep 4"
+    f" && {PERF} >/run/perf.json && grep -Eq '^  \"scanout\": [1-9]' /run/perf.json"
+    " && grep -Eq '^  \"frames\": 0,' /run/perf.json")
 # Real apps, from the compositor-apps extension (--apps): each maps its window and keeps running.
 APPS = [
     ("a GTK 3 app maps a window", "gtk3-demo", "gtk3-demo"),
@@ -555,14 +574,15 @@ def test_desktop(report, vm, sysext, apps, appkit, gpu):
         if not report.check(vm, name, command, timeout=180):
             show(vm, "perf.render", "cat /run/perf.json 2>/dev/null | head -n 12")
     show(vm, "perf.render with 64×64 damage", "grep -E '^  \"(frames|p50_ms|p99_ms|max_ms)\"' /run/perf.json")
-    if not gpu:
-        clock = host_clock()
-        if clock != {"performance"}:
-            print(f"note: the host's cores run at {', '.join(sorted(clock)) or 'an unknown'} energy"
-                  " preference; the frame budget holds at a fixed clock: echo performance | sudo tee"
-                  " /sys/devices/system/cpu/cpu*/cpufreq/energy_performance_preference", flush=True)
-        report.check(vm, *SCENE_CHECK, timeout=180)
-        show(vm, "perf.render of the scene", "cat /run/perf.json; tr '{' '\\n' </run/scene.json | grep stage")
+    clock = host_clock()
+    if clock != {"performance"}:
+        print(f"note: the host's cores run at {', '.join(sorted(clock)) or 'an unknown'} energy"
+              " preference; the frame budget holds at a fixed clock: echo performance | sudo tee"
+              " /sys/devices/system/cpu/cpu*/cpufreq/energy_performance_preference", flush=True)
+    report.check(vm, *scene_check(gpu), timeout=180)
+    show(vm, "perf.render of the scene", "cat /run/perf.json; tr '{' '\\n' </run/scene.json | grep stage")
+    if gpu and not report.check(vm, *SCANOUT_CHECK, timeout=180):
+        show(vm, "perf.render of the full-screen client", "cat /run/perf.json")
     for index, (name, command, app_id) in enumerate(APPS if apps else []):
         if not report.check(vm, name, app_check(index, command, app_id), timeout=180):
             show(vm, f"{command} journal", f"journalctl -q --user-unit=silica-test-app{index}.service"

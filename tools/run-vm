@@ -8,6 +8,8 @@
 #
 # --gpu gives the VM a virtio-gpu with host OpenGL (virgl) or Vulkan (venus);
 # without it Mesa renders in software (softpipe: IPE refuses llvmpipe's JIT).
+# Headless, SILICA_VM_RENDER_NODE (e.g. /dev/dri/renderD128) picks the host GPU
+# QEMU renders on; otherwise QEMU takes the first render node it can use.
 # --outputs gives the virtio-gpu N display outputs (default 1).
 # --resolution sets the outputs' preferred mode (e.g. 1920x1200, the host
 # screen); --fullscreen opens the QEMU window full screen.
@@ -103,9 +105,13 @@ if [ -n "$res" ]; then
 fi
 if [ -n "$gpu" ]; then
   # The GL display: a window, or an offscreen EGL context when headless.
-  if [ "$display" = "-display none" ]; then display="-display egl-headless"; else display="-display gtk,gl=on"; fi
+  if [ "$display" = "-display none" ]; then
+    display="-display egl-headless${SILICA_VM_RENDER_NODE:+,rendernode=$SILICA_VM_RENDER_NODE}"
+  else
+    display="-display gtk,gl=on"
+  fi
 fi
-if [ "$display" != "-display none" ] && [ "$display" != "-display egl-headless" ]; then
+if [ "$display" != "-display none" ] && [ "${display#-display egl-headless}" = "$display" ]; then
   display="$display$full"
 fi
 
