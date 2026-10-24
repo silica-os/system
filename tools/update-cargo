@@ -3,18 +3,22 @@
 
   tools/update-cargo NAME [REF]
 
-NAME is a Rust repo built by an element of that name (compositor, appkit). REF
+NAME is a Rust repo built by an element of that name (compositor, appkit, dock). REF
 (default: origin/main) is resolved in ~/silica/NAME (or $SILICA_<NAME>). The
-cargo2 source gets one entry per crates.io package of that commit's Cargo.lock.
+cargo2 source gets one entry per package of that commit's Cargo.lock that is
+not a path dependency: crates.io packages and packages from github.com git
+repositories (the Dock builds against silica-os/appkit's main).
 """
 import os
 import re
 import subprocess
 import sys
 import tomllib
+from urllib.parse import parse_qsl, urlparse
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 REGISTRY = "registry+https://github.com/rust-lang/crates.io-index"
+GITHUB = "https://github.com/"
 
 
 def git(repo, *args):
@@ -31,18 +35,35 @@ def main():
     commit = git(repo, "rev-parse", f"{ref}^{{commit}}").strip()
     lock = tomllib.loads(git(repo, "show", f"{commit}:Cargo.lock"))
     crates = []
+    has_git = False
     for package in lock.get("package", []):
         source = package.get("source")
         if source is None:
             continue
-        if source != REGISTRY:
-            sys.exit(f"{package['name']}: only crates.io sources are supported, not {source}")
-        crates.append(
-            "  - kind: registry\n"
-            f"    name: {package['name']}\n"
-            f"    version: {package['version']}\n"
-            f"    sha: {package['checksum']}\n"
-        )
+        if source == REGISTRY:
+            crates.append(
+                "  - kind: registry\n"
+                f"    name: {package['name']}\n"
+                f"    version: {package['version']}\n"
+                f"    sha: {package['checksum']}\n"
+            )
+        elif source.startswith("git+" + GITHUB):
+            url = urlparse(source[len("git+"):])
+            repo = "github:" + url.path.lstrip("/")
+            entry = (
+                "  - kind: git\n"
+                f"    name: {package['name']}\n"
+                f"    version: {package['version']}\n"
+                f"    repo: {repo}\n"
+                f"    commit: {url.fragment}\n"
+            )
+            query = parse_qsl(url.query)
+            if query:
+                entry += "    query:\n" + "".join(f"      {k}: {v}\n" for k, v in query)
+            crates.append(entry)
+            has_git = True
+        else:
+            sys.exit(f"{package['name']}: only crates.io and github.com sources are supported, not {source}")
     with open(element, encoding="utf-8") as f:
         text = f.read()
     head = text[: text.index("sources:\n")]
@@ -54,7 +75,8 @@ def main():
         f"  ref: {commit}\n"
         "- kind: cargo2\n"
         "  cargo-lock: Cargo.lock\n"
-        "  ref:\n" + "".join(crates)
+        + ("  git-mirrors:\n    https://github.com/: \"github:\"\n" if has_git else "")
+        + "  ref:\n" + "".join(crates)
     )
     with open(element, "w", encoding="utf-8") as f:
         f.write(head + sources)
