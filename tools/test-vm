@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Boots a fresh Silica image in QEMU and checks the base system.
 
-  tools/test-vm [--update VERSION] [--install] [--desktop [--apps] [--appkit]]
+  tools/test-vm [--update VERSION] [--install] [--desktop [--apps] [--appkit] [--dock]]
                 [--gpu virgl|venus] [--keep]
 
 The first boot gets its answers from credentials (locale, keymap, timezone
@@ -19,6 +19,10 @@ the debug shell on ttyS1, which works only with Secure Boot off.
 --apps            with --desktop: also installs compositor-apps (GTK 3, GTK 4 and
                   Qt 6 apps, tools/dev-sysext --build-only compositor-apps) and
                   checks that each maps its window.
+--dock            with --desktop: also installs dock-dev (tools/dev-sysext
+                  --build-only dock-dev), checks that the session starts the Dock's
+                  user service, that its layer surface is on the display, and takes
+                  a screendump of it.
 --appkit          with --desktop: also installs appkit-dev (tools/dev-sysext
                   --build-only appkit-dev), launches the Kit Gallery and checks
                   that it maps its window and draws it.
@@ -48,7 +52,10 @@ import time
 import zlib
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-LOGDIR = "/dev/shm"
+# Sockets, logs and screendumps go to SILICA_TEST_DIR (default /dev/shm) and the extensions are
+# served on SILICA_TEST_PORT (default 8080), so that two runs can live side by side.
+LOGDIR = os.environ.get("SILICA_TEST_DIR", "/dev/shm")
+PORT = os.environ.get("SILICA_TEST_PORT", "8080")
 SERIAL = f"{LOGDIR}/silica-test-serial.sock"
 DEBUG = f"{LOGDIR}/silica-test-debug.sock"
 MONITOR = f"{LOGDIR}/silica-test-monitor.sock"
@@ -307,7 +314,7 @@ def wait_reboot(report, vm):
 def test_update(report, vm, version):
     payload = f"{ROOT}/out/update-{version}"
     report.must(os.path.isdir(payload), f"{payload} exists")
-    server = subprocess.Popen([sys.executable, "-m", "http.server", "8080"], cwd=payload,
+    server = subprocess.Popen([sys.executable, "-m", "http.server", PORT], cwd=payload,
                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     try:
         report.check(vm, f"update to {version} is downloaded and staged",
@@ -514,6 +521,22 @@ def gallery_pixels(path):
     return sum(1 for i in range(0, len(pixels) - 2, 3) if min(pixels[i:i + 3]) > 0xf0)
 
 
+def off_background(path, rows=150):
+    """Counts the pixels in the bottom rows of a PPM screendump that differ from the desktop's
+    own color (read in the top-left corner): the Dock's shelf is thousands of them."""
+    with open(path, "rb") as f:
+        data = f.read()
+    m = re.match(rb"P6\s+(\d+)\s+(\d+)\s+(\d+)\s", data)
+    if not m:
+        return 0
+    width, height = int(m.group(1)), int(m.group(2))
+    pixels = data[m.end():]
+    ground = pixels[:3]
+    start = max(height - rows, 0) * width * 3
+    return sum(1 for i in range(start, len(pixels) - 2, 3)
+               if any(abs(pixels[i + k] - ground[k]) > 12 for k in range(3)))
+
+
 def host_clock():
     """The host's energy performance preferences, one per kind among its cores."""
     found = set()
@@ -527,17 +550,18 @@ def host_clock():
     return found
 
 
-def test_desktop(report, vm, sysext, apps, appkit, gpu):
+def test_desktop(report, vm, sysext, apps, appkit, dock, gpu):
     ext = f"{ROOT}/out/extensions"
-    names = [sysext, *(["compositor-apps"] if apps else []), *(["appkit-dev"] if appkit else [])]
+    names = [sysext, *(["compositor-apps"] if apps else []), *(["appkit-dev"] if appkit else []),
+             *(["dock-dev"] if dock else [])]
     for name in names:
         report.must(os.path.exists(f"{ext}/silica-{name}.raw"), f"{ext}/silica-{name}.raw exists")
-    server = subprocess.Popen([sys.executable, "-m", "http.server", "8080"], cwd=ext,
+    server = subprocess.Popen([sys.executable, "-m", "http.server", PORT], cwd=ext,
                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     try:
         fetch = " && ".join(
             "curl -fsS --retry 20 --retry-delay 1 --retry-connrefused"
-            f" -o /var/lib/extensions/silica-{name}.raw http://10.0.2.2:8080/silica-{name}.raw"
+            f" -o /var/lib/extensions/silica-{name}.raw http://10.0.2.2:{PORT}/silica-{name}.raw"
             for name in names)
         merged = " && ".join(f"systemd-sysext status | grep -q silica-{name}" for name in names)
         report.check(vm, "the signed test extensions merge and their code runs",
@@ -604,8 +628,119 @@ def test_desktop(report, vm, sysext, apps, appkit, gpu):
         print(f"{'PASS' if ok else 'FAIL'}  the Kit Gallery draws its window ({white} light pixels)", flush=True)
         if not ok:
             report.failed += 1
+    if dock:
+        unit = "systemctl -q -M tester@.host --user is-active silica-dock.service"
+        started = report.check(vm, "the session starts the Dock's user service",
+                               f"for i in $(seq 30); do {unit} && break; sleep 1; done; {unit}")
+        layer = f"{USER} --wait --pipe silica-cli layer.list | grep -Eq '\"namespace\": *\"dock\"'"
+        report.check(vm, "the Dock's layer surface is on the display",
+                     f"for i in $(seq 30); do {layer} && break; sleep 1; done; {layer}", timeout=180)
+        shelf = f"{LOGDIR}/silica-test-dock.ppm"
+        shot = started and (vm.screendump(shelf) or compositor_screenshot(vm, shelf))
+        covered = off_background(shelf) if shot else 0
+        ok = covered > 2000
+        print(f"{'PASS' if ok else 'FAIL'}  the display shows the Dock ({covered} pixels differ from the desktop in the bottom rows)", flush=True)
+        if not ok:
+            report.failed += 1
+            show(vm, "Dock journal", "journalctl -q --user-unit=silica-dock.service"
+                 " _UID=$(id -u tester) -o cat | tail -n 20 | cut -c1-300")
+        report.check(vm, "the Dock keeps running", f"sleep 3 && {unit}")
+        if started:
+            dock_scenes(report, vm, unit)
     report.check(vm, "the compositor logged no errors",
                  "! journalctl -q _SYSTEMD_USER_UNIT=silica-compositor.service -p err -o cat | grep .")
+
+
+def dock_scenes(report, vm, unit):
+    """Spaces, Panorama, App Windows and Show Desktop, driven by catalog commands, a gesture and
+    clicks: the Dock opens its surfaces, the windows move where it places them and everything goes
+    away again. The windows are told apart by the test client's red."""
+    def layer(namespace):
+        return f"{USER} --wait --pipe silica-cli layer.list | grep -Eq '\"namespace\": *\"{namespace}\"'"
+
+    def waits(namespace, present=True):
+        probe = layer(namespace) if present else f"! {layer(namespace)}"
+        return f"for i in $(seq 20); do {probe} && break; sleep 0.5; done; {probe}"
+
+    def cli(*args):
+        return f"{USER} --wait --pipe silica-cli {' '.join(args)} >/dev/null"
+
+    def red(label):
+        path = f"{LOGDIR}/silica-test-dock-{label}.ppm"
+        return client_pixels(path)[0] if (vm.screendump(path) or compositor_screenshot(vm, path)) else -1
+
+    def verdict(ok, text):
+        print(f"{'PASS' if ok else 'FAIL'}  {text}", flush=True)
+        if not ok:
+            report.failed += 1
+
+    report.check(vm, "a client window to arrange",
+                 f"{USER} --unit=silica-test-dock-client /usr/libexec/silica/tests/silica-test-client --seconds 600"
+                 f" && for i in $(seq 20); do {USER} --wait --pipe silica-cli window.list"
+                 " | grep -q dev.frascella.Silica.TestClient && break; sleep 1; done; sleep 2",
+                 timeout=180)
+    before = red("before")
+    verdict(before > 1000, f"the window is on the display ({before} red pixels)")
+    for name, command in (("Panorama", "panorama.toggle"), ("App Windows", "panorama.app")):
+        report.check(vm, f"{name} opens the Dock's overlay", f"{cli('engine.execute', 'id=' + command)} && {waits('panorama')}")
+        time.sleep(1)
+        shown = red(command)
+        verdict(shown > before // 2, f"the window stays drawn in {name} ({shown} of {before} red pixels)")
+        report.check(vm, f"{name} closes again", f"{cli('engine.execute', 'id=' + command)} && {waits('panorama', False)}")
+        time.sleep(1)
+    report.check(vm, "Show Desktop slides the windows away",
+                 f"{cli('engine.execute', 'id=desktop.show')} && {waits('desktop-strips')}")
+    time.sleep(1)
+    away = red("desktop")
+    verdict(0 <= away < before // 4, f"the window leaves the desktop ({away} of {before} red pixels)")
+    report.check(vm, "Show Desktop brings them back",
+                 f"{cli('engine.execute', 'id=desktop.show')} && {waits('desktop-strips', False)}")
+    time.sleep(1)
+    back = red("back")
+    verdict(back >= before * 9 // 10, f"the window is back ({back} of {before} red pixels)")
+    # The Dock drives the genie: the window is gone after it and comes back with a restore.
+    ident = (f"$({USER} --wait --pipe silica-cli window.list | grep -o '\"id\": *[^,}}]*'"
+             " | head -n 1 | sed 's/.*: *//; s/\"//g')")
+    report.check(vm, "minimizing hands the window to the Dock", cli("window.minimize", f"id={ident}"))
+    time.sleep(1.5)
+    gone = red("minimized")
+    verdict(0 <= gone < before // 20, f"the minimized window is not on the display ({gone} of {before} red pixels)")
+    report.check(vm, "the window is restored", cli("window.focus", f"id={ident}"))
+    time.sleep(1.5)
+    restored = red("restored")
+    verdict(restored >= before * 9 // 10, f"the restored window is back ({restored} of {before} red pixels)")
+    # Spaces: "+" in the bar adds one, Escape closes Panorama, the commands and a four-finger
+    # swipe move between them.
+    report.check(vm, "the spaces bar's + adds a space",
+                 f"{cli('engine.execute', 'id=panorama.toggle')} && {waits('panorama')}"
+                 f" && sleep 1 && {cli('input.click', 'x=1254', 'y=20')}")
+    time.sleep(1)
+    red("bar")
+    report.check(vm, "Escape closes Panorama",
+                 f"{cli('input.key', 'key=Escape')} && {waits('panorama', False)}")
+    time.sleep(1)
+    report.check(vm, "the next space is reached", cli("engine.execute", "id=space.next"))
+    time.sleep(1.5)
+    other = red("space2")
+    verdict(0 <= other < before // 20, f"the first space's window is gone from the second ({other} of {before} red pixels)")
+    report.check(vm, "the previous space is reached", cli("engine.execute", "id=space.previous"))
+    time.sleep(1.5)
+    home = red("space1")
+    verdict(home >= before * 9 // 10, f"the window is back on the first space ({home} of {before} red pixels)")
+    report.check(vm, "a four-finger swipe left moves to the next space",
+                 cli("input.gesture", "kind=swipe", "fingers=4", "dx=-300", "dy=0"))
+    time.sleep(1.5)
+    swiped = red("swipe")
+    verdict(0 <= swiped < before // 20, f"the swipe left the window behind ({swiped} of {before} red pixels)")
+    report.check(vm, "a four-finger swipe right comes back",
+                 cli("input.gesture", "kind=swipe", "fingers=4", "dx=300", "dy=0"))
+    time.sleep(1.5)
+    again = red("swipe-back")
+    verdict(again >= before * 9 // 10, f"the window is back after the swipe ({again} of {before} red pixels)")
+    show(vm, "Dock journal", "journalctl -q _SYSTEMD_USER_UNIT=silica-dock.service"
+         " -o cat | tail -n 40 | cut -c1-300")
+    report.check(vm, "the Dock survives them without a restart",
+                 f"{unit} && [ \"$(systemctl -M tester@.host --user show -p NRestarts --value silica-dock.service)\" = 0 ]")
 
 
 def hold(vm):
@@ -635,6 +770,8 @@ def main():
                         help="the extension --desktop installs (compositor-dev: a dev build)")
     parser.add_argument("--apps", action="store_true",
                         help="with --desktop: also install compositor-apps and check GTK and Qt apps")
+    parser.add_argument("--dock", action="store_true",
+                        help="with --desktop: also install dock-dev and check the Dock")
     parser.add_argument("--appkit", action="store_true",
                         help="with --desktop: also install appkit-dev and check the Kit Gallery")
     args = parser.parse_args()
@@ -653,7 +790,7 @@ def main():
     try:
         boot_and_check(report, vm, BASE_CHECKS)
         if args.desktop:
-            test_desktop(report, vm, args.sysext, args.apps, args.appkit, args.gpu)
+            test_desktop(report, vm, args.sysext, args.apps, args.appkit, args.dock, args.gpu)
         if args.update:
             test_update(report, vm, args.update)
         if args.hold:
