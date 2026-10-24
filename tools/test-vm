@@ -629,6 +629,9 @@ def test_desktop(report, vm, sysext, apps, appkit, dock, gpu):
         if not ok:
             report.failed += 1
     if dock:
+        if appkit:
+            # The Dock's scenes count the test client's pixels: the Kit Gallery leaves first.
+            vm.debug.run(f"systemctl -M tester@.host --user stop silica-test-app{len(APPS)}.service; sleep 1")
         unit = "systemctl -q -M tester@.host --user is-active silica-dock.service"
         started = report.check(vm, "the session starts the Dock's user service",
                                f"for i in $(seq 30); do {unit} && break; sleep 1; done; {unit}")
