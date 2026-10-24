@@ -31,7 +31,7 @@ sources:
 - kind: git_repo
   url: github:silica-os/dock.git
   track: main
-  ref: 5bc576d4f75d6065d0ae221133d9c5ee719a7f91
+  ref: ed152d1d4640adc2fd0618c8aa78b55edcbdd992
 - kind: cargo2
   cargo-lock: Cargo.lock
   git-mirrors:
@@ -73,14 +73,14 @@ sources:
     name: appkit
     version: 0.1.0
     repo: github:silica-os/appkit
-    commit: 15775cb39a614262c87161bba0fbb50c1dc52ec7
+    commit: bd44667125220b1f4a3d7eef49a4a776b6200c51
     query:
       branch: main
   - kind: git
     name: appkit-sys
     version: 0.1.0
     repo: github:silica-os/appkit
-    commit: 15775cb39a614262c87161bba0fbb50c1dc52ec7
+    commit: bd44667125220b1f4a3d7eef49a4a776b6200c51
     query:
       branch: main
   - kind: registry
@@ -799,7 +799,7 @@ sources:
     name: silica-protocols
     version: 0.1.0
     repo: github:silica-os/appkit
-    commit: 15775cb39a614262c87161bba0fbb50c1dc52ec7
+    commit: bd44667125220b1f4a3d7eef49a4a776b6200c51
     query:
       branch: main
   - kind: registry
